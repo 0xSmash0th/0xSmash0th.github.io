@@ -1,1 +1,618 @@
-Hello World
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Recursos de Preparación para Familias Inmigrantes</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f5f5f5;
+        }
+
+        header {
+            background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+            color: white;
+            padding: 2rem 0;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+
+        h1 {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+            text-align: center;
+        }
+
+        .subtitle {
+            text-align: center;
+            opacity: 0.9;
+            font-size: 1.1rem;
+        }
+
+        nav {
+            background-color: #fff;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+        }
+
+        nav ul {
+            list-style: none;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            padding: 1rem 0;
+        }
+
+        nav a {
+            color: #2c3e50;
+            text-decoration: none;
+            padding: 0.5rem 1rem;
+            margin: 0.25rem;
+            border-radius: 5px;
+            transition: all 0.3s ease;
+            font-weight: 500;
+        }
+
+        nav a:hover {
+            background-color: #3498db;
+            color: white;
+        }
+
+        .section {
+            background-color: white;
+            margin: 2rem 0;
+            padding: 2rem;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+
+        h2 {
+            color: #2c3e50;
+            margin-bottom: 1.5rem;
+            font-size: 1.8rem;
+            border-bottom: 3px solid #3498db;
+            padding-bottom: 0.5rem;
+        }
+
+        h3 {
+            color: #34495e;
+            margin: 1.5rem 0 1rem;
+            font-size: 1.3rem;
+        }
+
+        .checklist {
+            background-color: #f8f9fa;
+            padding: 1.5rem;
+            border-radius: 8px;
+            margin: 1rem 0;
+        }
+
+        .checklist-item {
+            padding: 0.75rem 0;
+            border-bottom: 1px solid #e0e0e0;
+            display: flex;
+            align-items: flex-start;
+        }
+
+        .checklist-item:last-child {
+            border-bottom: none;
+        }
+
+        .checklist-item::before {
+            content: "✓";
+            color: #27ae60;
+            font-weight: bold;
+            margin-right: 1rem;
+            font-size: 1.2rem;
+        }
+
+        .contact-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+            margin-top: 1.5rem;
+        }
+
+        .contact-card {
+            background-color: #f8f9fa;
+            padding: 1.5rem;
+            border-radius: 8px;
+            border: 2px solid #e0e0e0;
+            transition: all 0.3s ease;
+        }
+
+        .contact-card:hover {
+            border-color: #3498db;
+            box-shadow: 0 4px 12px rgba(52, 152, 219, 0.15);
+        }
+
+        .contact-card h4 {
+            color: #2c3e50;
+            margin-bottom: 0.5rem;
+            font-size: 1.1rem;
+        }
+
+        .contact-card .phone {
+            font-size: 1.2rem;
+            font-weight: bold;
+            color: #e74c3c;
+            margin: 0.5rem 0;
+        }
+
+        .emergency {
+            background-color: #fee;
+            border: 2px solid #e74c3c;
+            padding: 1.5rem;
+            border-radius: 8px;
+            margin: 2rem 0;
+        }
+
+        .emergency h3 {
+            color: #e74c3c;
+            margin-top: 0;
+        }
+
+        .warning {
+            background-color: #fff3cd;
+            border: 1px solid #ffeaa7;
+            padding: 1rem;
+            border-radius: 5px;
+            margin: 1rem 0;
+        }
+
+        .info-box {
+            background-color: #e3f2fd;
+            border-left: 4px solid #2196f3;
+            padding: 1rem;
+            margin: 1rem 0;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+        }
+
+        th, td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+
+        th {
+            background-color: #f8f9fa;
+            font-weight: 600;
+            color: #2c3e50;
+        }
+
+        tr:hover {
+            background-color: #f8f9fa;
+        }
+
+        .footer {
+            background-color: #2c3e50;
+            color: white;
+            text-align: center;
+            padding: 2rem 0;
+            margin-top: 4rem;
+        }
+
+        .footer p {
+            opacity: 0.8;
+        }
+
+        @media (max-width: 768px) {
+            h1 {
+                font-size: 1.5rem;
+            }
+            
+            .section {
+                padding: 1.5rem;
+            }
+
+            nav ul {
+                flex-direction: column;
+            }
+
+            nav a {
+                display: block;
+                text-align: center;
+            }
+        }
+
+        .highlight {
+            background-color: #fffacd;
+            padding: 2px 4px;
+            border-radius: 3px;
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 0.75rem 1.5rem;
+            background-color: #3498db;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            transition: all 0.3s ease;
+            margin-top: 1rem;
+        }
+
+        .btn:hover {
+            background-color: #2980b9;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>Recursos de Preparación para Familias Inmigrantes</h1>
+            <p class="subtitle">Guía completa de seguridad y recursos legales en Baltimore</p>
+        </div>
+    </header>
+
+    <nav>
+        <div class="container">
+            <ul>
+                <li><a href="#preparacion">Preparación</a></li>
+                <li><a href="#seguridad">Seguridad</a></li>
+                <li><a href="#detencion">En Caso de Detención</a></li>
+                <li><a href="#contactos">Contactos de Emergencia</a></li>
+                <li><a href="#refugios">Redes de Apoyo</a></li>
+                <li><a href="#trabajo">Trabajo y Movilidad</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <main class="container">
+        <section id="preparacion" class="section">
+            <h2>Lista de Verificación de Preparación</h2>
+            <p>Prepárate ahora para protegerte a ti y a tu familia en caso de que venga ICE. Organiza tus documentos y tu plan de emergencia con anticipación.</p>
+            
+            <div class="checklist">
+                <div class="checklist-item">
+                    Guarda tu pasaporte, identificación estatal, papeles de trabajo y el acta de nacimiento de tu hijo en un lugar seguro, y comparte copias con una persona de confianza.
+                </div>
+                <div class="checklist-item">
+                    Anota contactos importantes (familiares, escuela del niño, médico, abogado de inmigración, grupos locales de apoyo) y lleva esta información contigo.
+                </div>
+                <div class="checklist-item">
+                    Reúnete pronto con un abogado de inmigración para discutir posibles defensas o formas de alivio.
+                </div>
+                <div class="checklist-item">
+                    Guarda los documentos originales escondidos en casa en un lugar seguro.
+                </div>
+                <div class="checklist-item">
+                    Guarda fotocopias de documentos importantes con alguien de confianza.
+                </div>
+                <div class="checklist-item">
+                    Lleva una "tarjeta de información" con contactos de emergencia, información escolar del niño y el número de tu abogado.
+                </div>
+                <div class="checklist-item">
+                    Identifica a un cuidador de confianza para tu hijo y asegúrate de que conozca las necesidades escolares y médicas del niño.
+                </div>
+                <div class="checklist-item">
+                    Considera otorgar un poder legal a ese cuidador. Usa formularios bilingües si es necesario.
+                </div>
+                <div class="checklist-item">
+                    Planifica tus finanzas: otorga poder legal sobre tu dinero para pagar cuentas o fianza. Guarda dinero en efectivo de emergencia.
+                </div>
+                <div class="checklist-item">
+                    Memoriza información personal clave (historial de trabajo, fecha de nacimiento del niño, hospital).
+                </div>
+            </div>
+
+            <div class="info-box">
+                <strong>Recursos locales:</strong> La Oficina de Asuntos de Inmigrantes de Baltimore (MIMA) tiene una guía para residentes indocumentados, y la línea directa de IDP (212-725-6422) es gratuita y disponible 24/7.
+            </div>
+        </section>
+
+        <section id="seguridad" class="section">
+            <h2>Lista de Verificación de Seguridad</h2>
+            <p>Usa hábitos cotidianos para reducir tu riesgo y conoce tus derechos.</p>
+
+            <div class="warning">
+                <strong>Importante:</strong> La policía de Baltimore se enfoca en combatir el crimen, no en el estatus migratorio, pero ICE sigue operando en la comunidad.
+            </div>
+
+            <h3>Si te detienen en la calle o en tu auto:</h3>
+            <div class="checklist">
+                <div class="checklist-item">
+                    Pregunta: "¿Estoy libre para irme?" antes de decir cualquier cosa.
+                </div>
+                <div class="checklist-item">
+                    Si dicen que no, responde: "Quiero permanecer en silencio" y "Quiero un abogado".
+                </div>
+                <div class="checklist-item">
+                    Muestra solamente tu licencia de conducir válida de Maryland (no documentos extranjeros).
+                </div>
+                <div class="checklist-item">
+                    Tienes derecho a negarte a cualquier registro de tu auto, tus bolsillos o tus pertenencias.
+                </div>
+                <div class="checklist-item">
+                    Como pasajero, no estás obligado a mostrar identificación ni responder sobre tu estatus.
+                </div>
+                <div class="checklist-item">
+                    Nunca firmes nada ni des información falsa.
+                </div>
+            </div>
+
+            <h3>Si ICE toca a tu puerta:</h3>
+            <div class="checklist">
+                <div class="checklist-item">
+                    Pide ver su identificación y una orden judicial - que te la pasen por debajo de la puerta.
+                </div>
+                <div class="checklist-item">
+                    Si no tienen orden, no tienes que abrir. Di: "No voy a hablar en este momento."
+                </div>
+                <div class="checklist-item">
+                    Si entran sin permiso, di: "No doy mi consentimiento para que estén en mi casa."
+                </div>
+                <div class="checklist-item">
+                    Informa si tienes hijos o necesidades médicas.
+                </div>
+            </div>
+
+            <h3>Precauciones adicionales:</h3>
+            <div class="checklist">
+                <div class="checklist-item">
+                    Evita situaciones que involucren a la policía - arrestos menores pueden activar alertas a ICE.
+                </div>
+                <div class="checklist-item">
+                    Evita viajes internacionales sin consultar con un abogado.
+                </div>
+                <div class="checklist-item">
+                    Mantén un perfil bajo en público y redes sociales.
+                </div>
+                <div class="checklist-item">
+                    Conoce las alertas comunitarias de grupos como CASA Maryland.
+                </div>
+            </div>
+        </section>
+
+        <section id="detencion" class="section">
+            <h2>Lista de Verificación en Caso de Detención</h2>
+            
+            <div class="emergency">
+                <h3>Acciones inmediatas si eres detenido:</h3>
+                <ol>
+                    <li>Di de inmediato: "Quiero permanecer en silencio" y "Quiero un abogado"</li>
+                    <li>NO firmes ningún documento ni respondas preguntas</li>
+                    <li>Informa que tienes un hijo ciudadano estadounidense</li>
+                    <li>Pide tiempo para organizar el cuidado de tu hijo</li>
+                </ol>
+            </div>
+
+            <div class="checklist">
+                <div class="checklist-item">
+                    Pide llamar a tu abogado o entrega el número. Si no tienes uno, llama a IDP (212-725-6422).
+                </div>
+                <div class="checklist-item">
+                    Contacta de inmediato al cuidador designado de tu hijo con documentos e instrucciones.
+                </div>
+                <div class="checklist-item">
+                    Pide a familiares que reúnan pruebas de vínculos comunitarios para la audiencia de fianza.
+                </div>
+                <div class="checklist-item">
+                    Solicita una audiencia de fianza explicando que tienes un hijo ciudadano y trabajo estable.
+                </div>
+                <div class="checklist-item">
+                    Proporciona a ICE el número del cuidador - están obligados a evitar que los niños terminen en foster care.
+                </div>
+                <div class="checklist-item">
+                    Toma notas de todos los eventos, fechas y nombres de oficiales para tu abogado.
+                </div>
+            </div>
+
+            <div class="info-box">
+                <strong>Recuerda:</strong> ICE debe permitirte hacer arreglos para el cuidado de tu hijo antes de la deportación. Si ignoran tus solicitudes, sigue insistiendo de manera respetuosa.
+            </div>
+        </section>
+
+        <section id="contactos" class="section">
+            <h2>Contactos Útiles para Padres Indocumentados en Baltimore</h2>
+            
+            <div class="warning">
+                <strong>Cómo usar esta lista:</strong>
+                <ul style="margin-top: 0.5rem; padding-left: 1.5rem;">
+                    <li>Guarda como captura de pantalla o PDF</li>
+                    <li>Comparte con tu cuidador de confianza</li>
+                    <li>Marca números clave como favoritos ★</li>
+                    <li>Prueba los números cada pocos meses</li>
+                </ul>
+            </div>
+
+            <h3>1. Líneas Directas de Emergencia (Redadas de ICE)</h3>
+            <div class="contact-grid">
+                <div class="contact-card">
+                    <h4>CASA Raid Tip Hotline ★</h4>
+                    <p class="phone">1-888-214-6016</p>
+                    <p>Reporta actividad de ICE en Maryland y Virginia</p>
+                    <p><strong>Horario:</strong> 24/7</p>
+                </div>
+                <div class="contact-card">
+                    <h4>Sanctuary DMV Hotline</h4>
+                    <p class="phone">202-335-1183</p>
+                    <p>Activación de respuesta rápida y abogados</p>
+                    <p><strong>Horario:</strong> 24/7</p>
+                </div>
+                <div class="contact-card">
+                    <h4>MIMA Baltimore</h4>
+                    <p class="phone">410-396-3141</p>
+                    <p>Información y referencias de emergencia migratoria</p>
+                    <p><strong>Horario:</strong> Lun-Vie 9am-5pm</p>
+                </div>
+            </div>
+
+            <h3>2. Ayuda Legal Gratuita o de Bajo Costo</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Organización</th>
+                        <th>Teléfono</th>
+                        <th>Servicios</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Esperanza Center</strong><br>Catholic Charities</td>
+                        <td>667-600-2941 (legal)<br>667-600-2900 (oficina)</td>
+                        <td>Representación completa, SIJS, defensa deportación<br>430 S. Broadway, Baltimore</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Maryland Immigrant Legal Assistance</strong></td>
+                        <td>443-703-3054</td>
+                        <td>Asesoría breve y clínicas pro bono<br>520 W. Fayette St.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Maryland Legal Aid</strong></td>
+                        <td>888-465-2468</td>
+                        <td>Consultas y representación para bajos ingresos<br>500 E. Lexington St.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>UM Carey Law Immigration Clinic</strong></td>
+                        <td>410-706-3922</td>
+                        <td>Casos complejos, estudiantes supervisados<br>Gratuito con evaluación</td>
+                    </tr>
+                    <tr>
+                        <td><strong>IDP Helpline Nacional</strong></td>
+                        <td>212-725-6422</td>
+                        <td>Asesoría criminal-inmigración<br>Deje mensaje para callback</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h3>3. Si Estás Detenido</h3>
+            <div class="emergency">
+                <p><strong>Freedom for Immigrants Hotline:</strong></p>
+                <p>Desde el centro de detención: Marca <span class="highlight">9233#</span> (gratis)</p>
+                <p>Para familiares afuera: <span class="highlight">510-822-2722</span></p>
+                <p>Baltimore ICE (solo abogados): 443-560-0640</p>
+            </div>
+        </section>
+
+        <section id="refugios" class="section">
+            <h2>Redes de Refugios y Tácticas de Evasión</h2>
+            
+            <p>Desde 2017, grupos de derechos de inmigrantes y organizaciones religiosas han organizado casas seguras de "Respuesta Rápida" en varias ciudades para familias en alto riesgo.</p>
+
+            <h3>Estructura de las Redes</h3>
+            <p>En ciudades como Los Ángeles, Chicago y Nueva York, coaliciones de iglesias y activistas mantienen casas secretas donde personas indocumentadas pueden vivir temporalmente si están siendo buscadas por el ICE. Congregaciones de distintas creencias han sido actores clave en esta red de protección.</p>
+
+            <div class="info-box">
+                <strong>Ejemplo:</strong> En Los Ángeles, una pastora supervisó la renovación de una casa diseñada para ocultar hasta tres familias inmigrantes, sostenida con donaciones y operada por voluntarios.
+            </div>
+
+            <h3>Señales y Secreto</h3>
+            <ul style="padding-left: 1.5rem; margin: 1rem 0;">
+                <li>La comunicación es encubierta y basada en intermediarios confiables</li>
+                <li>El proceso de verificación es crucial para evitar infiltrados</li>
+                <li>Conexión a través de sacerdotes locales, líderes del movimiento santuario o abogados activistas</li>
+                <li>Uso de nombres en clave y aplicaciones encriptadas (Signal)</li>
+                <li>Restricciones: no redes sociales, teléfonos apagados, salidas mínimas</li>
+            </ul>
+
+            <h3>Vida Diaria en un Refugio</h3>
+            <div class="checklist">
+                <div class="checklist-item">
+                    Cortinas siempre cerradas, luces apagadas temprano
+                </div>
+                <div class="checklist-item">
+                    Horarios para cocinar con ventanas cerradas
+                </div>
+                <div class="checklist-item">
+                    Tareas asignadas para mantener a todos ocupados
+                </div>
+                <div class="checklist-item">
+                    Anfitriones rotan para dejar víveres
+                </div>
+                <div class="checklist-item">
+                    Salir solo disfrazado y de noche si es absolutamente necesario
+                </div>
+            </div>
+        </section>
+
+        <section id="trabajo" class="section">
+            <h2>Trabajo en Construcción como Cobertura</h2>
+
+            <h3>Ventajas de Movilidad</h3>
+            <p>Ser contratista ofrece ventajas para evitar la detección. A diferencia de trabajadores en fábricas, un contratista se mueve constantemente entre diferentes obras, dificultando que ICE sepa su ubicación.</p>
+
+            <div class="info-box">
+                <strong>Dato:</strong> La industria de la construcción tiene aproximadamente 13.7% de trabajadores indocumentados en EE.UU., el porcentaje más alto de cualquier industria.
+            </div>
+
+            <h3>Informalidad y Pago en Efectivo</h3>
+            <ul style="padding-left: 1.5rem; margin: 1rem 0;">
+                <li>Trabajo por efectivo o cheques sin rastro en sistemas como E-Verify</li>
+                <li>No aparece en registros laborales oficiales ni auditorías</li>
+                <li>Sin embargo, también significa no tener protecciones laborales ni seguro médico</li>
+            </ul>
+
+            <h3>Amenazas en los Lugares de Trabajo</h3>
+            <div class="warning">
+                <p><strong>Alerta:</strong> Bajo el liderazgo actual del DHS, las redadas y auditorías laborales han aumentado. Las inspecciones sorpresa se multiplicaron por diez en los primeros meses de 2025.</p>
+            </div>
+
+            <p>Ejemplos de redadas en construcción:</p>
+            <ul style="padding-left: 1.5rem; margin: 1rem 0;">
+                <li>2018: Grupo de techadores arrestados en Minnesota</li>
+                <li>2020: Jornaleros detenidos frente a Home Depot en California</li>
+            </ul>
+
+            <h3>Cobertura vs. Exposición</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Ventajas</th>
+                        <th>Riesgos</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Movimiento constante dificulta rastreo</td>
+                        <td>Frecuentemente en espacios públicos</td>
+                    </tr>
+                    <tr>
+                        <td>No hay oficina de RH que inspeccionar</td>
+                        <td>Conducir puede llevar a detenciones</td>
+                    </tr>
+                    <tr>
+                        <td>Ambiente familiar con otros trabajadores</td>
+                        <td>Puntos de reunión pueden ser objetivos</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <div class="info-box">
+                <strong>Nota sobre Baltimore:</strong> La policía de la ciudad no llama al ICE por infracciones de tránsito según sus políticas, pero otras jurisdicciones o la Policía Estatal pueden tener diferentes procedimientos.
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <div class="container">
+            <p>Mantente seguro, mantente preparado</p>
+            <p>La red de justicia para inmigrantes de Baltimore está lista para ayudarte</p>
+        </div>
+    </footer>
+</body>
+</html>
