@@ -1,0 +1,19 @@
+{{ define "main" }}
+  <article>
+    <h1>{{ .Title }}</h1>
+    <p class="meta">
+      <time datetime="{{ .Date.Format "2006-01-02" }}">{{ .Date.Format "2006-01-02" }}</time>
+      {{ with .Params.tags }} · {{ range . }}<a class="tag" href="{{ (printf "/tags/%s/" (urlize .)) | relURL }}">{{ . }}</a> {{ end }}{{ end }}
+      {{ with .Params.disclosure }}<br><span class="disclosure">Disclosure: {{ . }}</span>{{ end }}
+    </p>
+    {{/* Opt in per post with  toc = true  in the front matter.
+         Depth comes from [markup.tableOfContents] in hugo.toml. */}}
+    {{ if .Params.toc }}
+      <nav class="toc" aria-label="Contents">
+        <p class="toc-title">Contents</p>
+        {{ .TableOfContents }}
+      </nav>
+    {{ end }}
+    {{ .Content }}
+  </article>
+{{ end }}

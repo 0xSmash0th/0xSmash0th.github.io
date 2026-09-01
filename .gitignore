@@ -1,0 +1,22 @@
+# Hugo build artifacts
+/public/
+/resources/_gen/
+/assets/jsconfig.json
+.hugo_build.lock
+
+# IDENTITY: the local deny-list holds your real name, real address and machine
+# names — the exact strings you are trying to keep out of the repo. It must
+# never be committed. .identity/patterns.example is the committed template.
+/.identity/patterns.local
+
+# OS / editor noise that has leaked usernames and paths before
+.DS_Store
+Thumbs.db
+*.swp
+*~
+/.idea/
+/.vscode/
+
+# Scratch space for un-scrubbed screenshots. Put raw captures here, scrub them
+# with ./bin/scrub-image.sh, and only then move them into assets or static.
+/raw/

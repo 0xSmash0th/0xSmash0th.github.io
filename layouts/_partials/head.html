@@ -1,0 +1,33 @@
+<meta charset="utf-8">
+
+{{/* IDENTITY: on GitHub Pages this meta tag is the ONLY CSP you get — Pages
+     has no configurable response headers. It must come before any resource
+     reference in <head> or the browser applies it too late.
+     Note what a meta CSP cannot do: frame-ancestors is ignored here (no
+     clickjacking defence), and HSTS / X-Content-Type-Options have no meta
+     equivalent at all. See deploy/README.md. */}}
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ if .IsHome }}{{ site.Title }}{{ else }}{{ .Title }} — {{ site.Title }}{{ end }}</title>
+<meta name="description" content="{{ with .Description }}{{ . }}{{ else }}{{ site.Params.description }}{{ end }}">
+
+{{/* IDENTITY: the generator tag is suppressed by disableHugoGeneratorInject
+     in hugo.toml, not here — Hugo injects it automatically and no template
+     change removes it. Verify after any Hugo upgrade:
+       grep -ri generator public/ */}}
+<meta name="referrer" content="no-referrer">
+<link rel="canonical" href="{{ .Permalink }}">
+
+{{/* IDENTITY: author metadata is deliberately the handle and nothing else.
+     Never wire this to .GitInfo or to an OS-level author field. */}}
+<meta name="author" content="{{ site.Params.handle }}">
+
+{{ with .OutputFormats.Get "rss" }}
+  <link rel="alternate" type="application/rss+xml" href="{{ .Permalink }}" title="{{ site.Title }}">
+{{ end }}
+
+{{/* Styles are built locally and fingerprinted. No external stylesheet, no
+     web font, no CDN: every one of those is a request that hands a third
+     party your readers' IP addresses. */}}
+{{ $css := slice (resources.Get "css/main.css") (resources.Get "css/syntax.css") | resources.Concat "css/bundle.css" | minify | fingerprint }}
+<link rel="stylesheet" href="{{ $css.RelPermalink }}" integrity="{{ $css.Data.Integrity }}">

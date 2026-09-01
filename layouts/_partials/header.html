@@ -1,0 +1,8 @@
+<header class="site-header">
+  <a class="site-title" href="{{ "/" | relURL }}">{{ site.Title }}</a>
+  <nav aria-label="Main">
+    <a href="{{ "/posts/" | relURL }}">posts</a>
+    <a href="{{ "/about/" | relURL }}">about</a>
+    {{ with .OutputFormats.Get "rss" }}<a href="{{ "/index.xml" | relURL }}">rss</a>{{ end }}
+  </nav>
+</header>

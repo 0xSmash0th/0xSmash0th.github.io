@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Delegates to the machine-wide hook, which this repo's core.hooksPath would
+# otherwise shadow. The word list itself lives in ~/.config/git/dirty-words and
+# is deliberately NOT in this repo — this repo is public.
+set -euo pipefail
+GLOBAL="$HOME/.config/git/hooks/dirty-scan"
+[ -x "$GLOBAL" ] && exec "$GLOBAL" commit-msg "$@"
+exit 0

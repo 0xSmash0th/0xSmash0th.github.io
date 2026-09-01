@@ -1,0 +1,12 @@
+<footer class="site-footer">
+  <p>
+    {{ with site.Params.contactEmail }}<a href="mailto:{{ . }}">{{ . }}</a>{{ end }}
+    {{ with site.Params.mastodon }} · <a rel="me noopener" href="{{ . }}">mastodon</a>{{ end }}
+    {{ with site.Params.github }} · <a rel="noopener" href="{{ . }}">github</a>{{ end }}
+    {{ with site.Params.twitter }} · <a rel="noopener" href="{{ . }}">twitter</a>{{ end }}
+  </p>
+  <p class="fine">
+    Written by {{ site.Params.handle }}. Opinions are mine and not my employer's.
+    Nothing here is published without the affected vendor's disclosure window having closed.
+  </p>
+</footer>

@@ -1,0 +1,18 @@
+# Cloudflare Pages response headers.
+# Verify after deploy:  curl -sI https://0xsmash0th.github.io/ | sort
+/*
+  # No JS is served by this site, so refuse all of it. If you later add
+  # Cloudflare Web Analytics, this becomes:
+  #   script-src 'self' https://static.cloudflareinsights.com;
+  #   connect-src https://cloudflareinsights.com;
+  # and nothing else — do not reach for 'unsafe-inline'.
+  Content-Security-Policy: default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; upgrade-insecure-requests
+  # Readers clicking a link out of a writeup should not carry the URL of the
+  # page they came from into someone else's logs.
+  Referrer-Policy: no-referrer
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Resource-Policy: same-origin
+  Permissions-Policy: accelerometer=(), camera=(), geolocation=(), gyroscope=(), microphone=(), payment=(), usb=(), interest-cohort=()
+  Strict-Transport-Security: max-age=31536000; includeSubDomains

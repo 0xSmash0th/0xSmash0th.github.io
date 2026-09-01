@@ -1,0 +1,28 @@
+# Local deny-list  —  copy to .identity/patterns.local (which is gitignored).
+#
+# This file exists because the strings you most need to keep out of the repo
+# are your real name, your real address and your machine names, and a file
+# listing them cannot itself be committed. patterns.local is in .gitignore.
+# This .example copy is the committed template and must stay generic.
+#
+# Format, one rule per line:
+#
+#     SEVERITY   <regex>   ## message shown when it matches
+#
+# SEVERITY is BLOCK (refuses the commit) or WARN (prints, commits anyway).
+# The regex is Python syntax, matched case-insensitively against every line of
+# every staged text file, and against file paths.
+#
+# Tune it. A deny-list that fires on every commit gets bypassed with
+# --no-verify within a week, and then it is protecting nothing.
+
+BLOCK   your\.real\.address@example\.com          ## real email address
+BLOCK   \bYour Real Name\b                        ## legal name
+BLOCK   /home/yourrealuser\b                      ## home directory path
+BLOCK   [\w.-]+@yourlaptop\b                      ## shell prompt shows the host
+BLOCK   \bAcmeCorp\b                              ## employer name
+
+# A bare hostname is usually too broad to BLOCK — if your machine is called
+# "fuzzy" you will trip on every post that says "fuzzy hashing". Prefer the
+# prompt-shaped form above, or downgrade the bare word to WARN:
+# WARN    \byourlaptop\b                          ## possible hostname mention

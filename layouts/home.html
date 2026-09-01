@@ -1,0 +1,15 @@
+{{ define "main" }}
+  <section class="intro">
+    {{ .Content }}
+  </section>
+  <h2>Recent posts</h2>
+  <ul class="post-list">
+    {{ range first 10 (where site.RegularPages "Section" "posts") }}
+      <li>
+        <a href="{{ .RelPermalink }}">{{ .Title }}</a>
+        <time datetime="{{ .Date.Format "2006-01-02" }}">{{ .Date.Format "2006-01-02" }}</time>
+        {{ with .Description }}<p class="excerpt">{{ . }}</p>{{ end }}
+      </li>
+    {{ end }}
+  </ul>
+{{ end }}

@@ -1,0 +1,95 @@
+# ---------------------------------------------------------------------------
+# Site configuration.
+#
+# Identity-relevant settings are marked IDENTITY. Read those comments before
+# changing them; several are the difference between a pseudonym that holds and
+# one that leaks on the next deploy.
+#
+# Run ./bin/set-identity.sh to fill in the __PLACEHOLDER__ values below.
+# ---------------------------------------------------------------------------
+
+baseURL           = 'https://0xsmash0th.github.io/'
+languageCode      = 'en-us'
+title             = '0xSmash0th'
+enableRobotsTXT   = true
+summaryLength     = 30
+timeZone          = 'UTC'
+
+# IDENTITY: Hugo injects <meta name="generator" content="Hugo x.y.z"> into
+# every page unless this is set. That tag advertises your exact toolchain
+# version, which is free reconnaissance and occasionally correlates two
+# sites as the same author.
+disableHugoGeneratorInject = true
+
+# IDENTITY: with enableGitInfo, Hugo exposes .GitInfo — including the commit
+# author's name and email — to templates, and many themes render it as a
+# "last edited by" line. Leave this false.
+enableGitInfo = false
+
+# IDENTITY: 'UTC' above, not your local zone. Post timestamps rendered in a
+# local zone narrow down where you live, and they do it on every single post.
+
+
+[pagination]
+  pagerSize = 20
+
+[params]
+  handle      = '0xSmash0th'
+  description = 'Notes on security research, reverse engineering, and things that broke.'
+  # IDENTITY: the only contact address the site should ever print. Keep it the
+  # dedicated one — never the address on your resume.
+  contactEmail = '0xSmash0th@gmail.com'
+  # Optional; leave empty to omit from the footer.
+  mastodon = ''
+  github   = 'https://github.com/0xSmash0th'
+  twitter  = 'https://x.com/0xsmash0th'
+
+  # IDENTITY: no analytics by default. Adding any means widening script-src
+  # in the meta CSP in layouts/_partials/head.html (GitHub Pages has no
+  # response-header CSP), and you should say so on the about page — this
+  # audience checks. Prefer a log-based or privacy-preserving option over
+  # anything that sets a cookie.
+  analytics = false
+
+[markup]
+  [markup.highlight]
+    noClasses  = false
+    lineNos    = false
+    tabWidth   = 4
+  [markup.goldmark.extensions.typographer]
+    # Goldmark's typographer is on by default and rewrites '--' into an en dash
+    # in prose. On this blog that silently corrupts command-line flags: a reader
+    # who copies "nmap --script vuln" out of a sentence gets an en dash and the
+    # command fails. Code spans and fenced blocks were never affected.
+    # Setting these to the literal characters keeps smart quotes and ellipses
+    # while leaving dashes alone.
+    endash = '--'
+    emdash = '---'
+
+  [markup.goldmark.renderer]
+    # Keep false. Raw HTML in Markdown is how a stray tracking pixel or an
+    # embedded iframe ends up on the site without passing any review.
+    unsafe = false
+  [markup.tableOfContents]
+    startLevel = 2
+    endLevel   = 3
+
+# IDENTITY: Hugo's privacy config. These harden the built-in embed shortcodes
+# so that a {{< youtube >}} or {{< x >}} in a post cannot silently attach a
+# third-party tracker to a reader's browser.
+[privacy]
+  [privacy.youtube]
+    privacyEnhanced = true
+  [privacy.x]
+    disable = true
+  [privacy.vimeo]
+    disable = true
+  [privacy.instagram]
+    disable = true
+
+[outputs]
+  home = ['HTML', 'RSS']
+  page = ['HTML']
+
+[taxonomies]
+  tag = 'tags'

@@ -1,0 +1,128 @@
+/* System font stack only: no webfont request, so no third party learns who
+   reads this site. Same reasoning as the CSP in static/_headers. */
+:root {
+  --bg: #fbfbf9;
+  --fg: #1c1c1a;
+  --muted: #62625c;
+  --rule: #dedcd4;
+  --link: #0b5c8a;
+  --code-bg: #f2f1ec;
+  --accent: #8a2f18;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14140f;
+    --fg: #e3e1d8;
+    --muted: #8f8d82;
+    --rule: #2e2e28;
+    --link: #7ab8dd;
+    --code-bg: #1e1e18;
+    --accent: #d98b6a;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 16px/1.65 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+        "Helvetica Neue", Arial, sans-serif;
+  padding: 0 1.25rem;
+}
+
+.site-header, main, .site-footer { max-width: 42rem; margin: 0 auto; }
+
+.site-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 2.5rem 0 1.25rem;
+  border-bottom: 1px solid var(--rule);
+}
+.site-title {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-weight: 600;
+  font-size: 1.15rem;
+  color: var(--fg);
+  text-decoration: none;
+}
+.site-header nav { margin-left: auto; display: flex; gap: 1rem; font-size: .9rem; }
+
+a { color: var(--link); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+
+main { padding: 2rem 0 3rem; }
+
+h1 { font-size: 1.7rem; line-height: 1.25; margin: 0 0 .5rem; }
+h2 { font-size: 1.25rem; margin: 2.25rem 0 .5rem; }
+h3 { font-size: 1.05rem; margin: 1.75rem 0 .4rem; }
+
+.meta, .excerpt, .fine { color: var(--muted); font-size: .875rem; }
+.meta { margin: 0 0 2rem; }
+.disclosure { font-style: italic; }
+
+.tag {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: .8rem;
+}
+
+.post-list { list-style: none; padding: 0; }
+.post-list li {
+  padding: .85rem 0;
+  border-bottom: 1px solid var(--rule);
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0 1rem;
+}
+.post-list time { color: var(--muted); font-size: .85rem; font-variant-numeric: tabular-nums; }
+.post-list .excerpt { grid-column: 1 / -1; margin: .3rem 0 0; }
+
+article p, article li { overflow-wrap: break-word; }
+
+code, kbd, samp {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: .875em;
+  background: var(--code-bg);
+  padding: .1em .3em;
+  border-radius: 3px;
+}
+pre {
+  background: var(--code-bg);
+  padding: .9rem 1rem;
+  border-radius: 5px;
+  overflow-x: auto;     /* long lines scroll in the block, never the page */
+  font-size: .875rem;
+  line-height: 1.5;
+}
+pre code { background: none; padding: 0; font-size: inherit; }
+
+blockquote {
+  margin: 1.5rem 0;
+  padding-left: 1rem;
+  border-left: 3px solid var(--accent);
+  color: var(--muted);
+}
+
+img, video { max-width: 100%; height: auto; }
+
+table { border-collapse: collapse; width: 100%; font-size: .9rem; display: block; overflow-x: auto; }
+th, td { border-bottom: 1px solid var(--rule); padding: .4rem .6rem; text-align: left; }
+
+.site-footer {
+  border-top: 1px solid var(--rule);
+  padding: 1.5rem 0 3rem;
+  font-size: .875rem;
+}
+
+.toc {
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  padding: .6rem 1rem;
+  margin: 0 0 2rem;
+  font-size: .9rem;
+}
+.toc-title { margin: 0; font-weight: 600; font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.toc ul { margin: .4rem 0 0; padding-left: 1.1rem; }
+.toc li { margin: .15rem 0; }

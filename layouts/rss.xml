@@ -1,0 +1,31 @@
+{{- /* Home feed carries posts only. The internal template would include every
+       top-level page — the About page showed up dated year 0001.
+       IDENTITY: deliberately no <managingEditor> or <webMaster>; those default
+       to an author email in some configurations. */ -}}
+{{- $pages := .RegularPages -}}
+{{- if .IsHome -}}{{- $pages = where site.RegularPages "Section" "posts" -}}{{- end -}}
+{{- $limit := 20 -}}
+{{- printf "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?>" | safeHTML }}
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>{{ if .IsHome }}{{ site.Title }}{{ else }}{{ .Title }} on {{ site.Title }}{{ end }}</title>
+    <link>{{ .Permalink }}</link>
+    <description>{{ with .Description }}{{ . }}{{ else }}{{ site.Params.description }}{{ end }}</description>
+    <language>{{ site.LanguageCode }}</language>
+    {{- with (first 1 $pages) }}{{ range . }}
+    <lastBuildDate>{{ .Date.UTC.Format "Mon, 02 Jan 2006 15:04:05 -0700" | safeHTML }}</lastBuildDate>
+    {{- end }}{{ end }}
+    {{- with .OutputFormats.Get "rss" }}
+    {{ printf "<atom:link href=%q rel=\"self\" type=%q/>" .Permalink .MediaType.Type | safeHTML }}
+    {{- end }}
+    {{- range first $limit $pages }}
+    <item>
+      <title>{{ .Title }}</title>
+      <link>{{ .Permalink }}</link>
+      <pubDate>{{ .Date.UTC.Format "Mon, 02 Jan 2006 15:04:05 -0700" | safeHTML }}</pubDate>
+      <guid>{{ .Permalink }}</guid>
+      <description>{{ with .Description }}{{ . }}{{ else }}{{ .Summary }}{{ end }}</description>
+    </item>
+    {{- end }}
+  </channel>
+</rss>

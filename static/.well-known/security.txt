@@ -1,0 +1,5 @@
+# If you found something in my stuff, tell me. https://www.rfc-editor.org/rfc/rfc9116
+Contact: mailto:0xSmash0th@gmail.com
+Preferred-Languages: en
+Canonical: https://0xsmash0th.github.io/.well-known/security.txt
+Expires: 2027-03-01T20:13:25Z

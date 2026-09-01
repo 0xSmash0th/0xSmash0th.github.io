@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Runs the machine-wide identity guard, then this repo's leak scan.
+#
+# This repo sets core.hooksPath=.githooks, which OVERRIDES the global
+# core.hooksPath — so the global hooks must be invoked explicitly here or they
+# would silently not run.
+#
+# Deliberate bypass:  git commit --no-verify
+set -euo pipefail
+
+GLOBAL="$HOME/.config/git/hooks/dirty-scan"
+[ -x "$GLOBAL" ] && "$GLOBAL" pre-commit
+
+command -v python3 >/dev/null || { echo "pre-commit: python3 not found, skipping scan" >&2; exit 0; }
+exec python3 "$(git rev-parse --show-toplevel)/bin/preflight.py"
