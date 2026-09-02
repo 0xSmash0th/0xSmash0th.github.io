@@ -6,23 +6,30 @@ description = 'I read the same 721 lines of kernel source twice under two threat
 tags = ['kernel', 'linux', 'threat-modeling', 'audit', 'arm']
 toc = true
 +++
+# TL;DR
 
-I read the same 721 lines of kernel source twice. Same file, same tree, same
-line numbers. The only thing I changed between passes was who I imagined on the
-other end of the wire.
+# Tegra IVC 101
+## Why look at it?
+I come from a Android background, as such I have paid my dues against binder, like all good researcher do. As a IPC surface I thought it would be interesting to compare and contrast.
+## What is it?
+### The file
 
-The second pass reached the same verdict and found that the reason I'd recorded
-for it was the weaker of the two I had in hand. It leaned on a constant that one
-driver happens to pass, and I'd promoted a property of that driver into a
-property of the library it calls.
+`drivers/firmware/tegra/ivc.c`
 
-No confirmed vulnerability came out of either pass. That's not the interesting
-part.
+It's a lock-free single-producer/single-consumer ring in a block of memory two
+processors both map. I will be using the terms `local` and `remote` in this breakdown. Think of `local` as a vetted service, which need not be linux, but does need to comply with the IVC protocol.  Think of `remote` as the untrusted guest, running linux of some flavor. 
+
+Concretely: `remote` writes a message into slot N of a fixed array,
+then bumps a counter. `local` watches the counter move, reads slot N, and bumps a
+counter of its own. That's the whole mechanism — two free-running counters and an
+array of fixed-size slots, one such array per direction, `remote` -> `local`, `local` -> `remote`. The code terms this relationship a `peer`. There can be many peers but for the purpose of understanding we will focus on 1 peer relationship. 
+## What uses it?
+
+# Tegra IVC from the lens of Binder
 
 ## The file
 
-`drivers/firmware/tegra/ivc.c`, 721 lines. Quotes and line numbers throughout are
-from 6.17-rc5, which is the tree I read.
+`drivers/firmware/tegra/ivc.c`
 
 It's a lock-free single-producer/single-consumer ring in a block of memory two
 processors both map. Concretely: A writes a message into slot N of a fixed array,
