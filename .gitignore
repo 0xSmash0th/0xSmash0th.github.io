@@ -20,3 +20,4 @@ Thumbs.db
 # Scratch space for un-scrubbed screenshots. Put raw captures here, scrub them
 # with ./bin/scrub-image.sh, and only then move them into assets or static.
 /raw/
+.obsidian/
