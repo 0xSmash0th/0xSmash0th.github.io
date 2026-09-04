@@ -9,14 +9,9 @@ toc = true
 # TL;DR
 
 - **No vulnerability (that I found) on the interesting "Hostile peer" surface that is open source.** Everything Binder does for you inside the kernel — framing, length, type, sender identity — IVC delegates to a layer that isn't in the tree. 
-- **Coming from Binder, the first thing you notice is everything that isn't
-  there.** No device node, no ioctl, no uapi header. Three `u32`s on the wire,
-  and no length, type, identity or sequence field among them. Zero allocations,
-  zero loops and zero locks in the whole file.
-- **The classic shared-ring bug isn't present, and not by accident.** The remote
-  end supplies counters, a state word and message bytes, but never the index used
-  to compute an address. That holds even against a remote writing every byte of
-  both shared regions. Good job killing the Type, Length, Value (TLV) paradigm that causes so much trouble!
+- **Coming from Binder, the first thing you notice is everything that isn't there.** No device node, no ioctl, no uapi header. Three `u32`s on the wire,
+  and no length, type, identity or sequence field among them. Zero allocations,  zero loops and zero locks in the whole file.
+- **The classic shared-ring bug isn't present, and not by accident.** The remote end supplies counters, a state word and message bytes, but never the index used to compute an address. That holds even against a remote writing every byte of both shared regions. Good job killing the Type, Length, Value (TLV) paradigm that causes so much trouble!
 
 # Tegra IVC 101
 ## Why look at it?
@@ -27,13 +22,10 @@ Someone told me about this new AI thing if you have heard of it. Apparently NVID
 I have no Tegra hardware, no hypervisor and no guest on the machine I read this on, and this was my own reading of public source, on my own time, against no hardware and no customer. This would also help determine if I wanted to do more work on Nvidia.
 ## What is it?
 
-It's a lock-free single-producer/single-consumer ring in a block of memory two
-processors both map. I will be using the terms `local` and `remote` in this breakdown. Think of `local` as a vetted service, which need not be linux, but does need to comply with the IVC protocol.  Think of `remote` as the untrusted guest, running linux of some flavor. 
+It's a lock-free single-producer/single-consumer ring in a block of memory two processors both map. I will be using the terms `local` and `remote` in this breakdown. Think of `local` as a vetted service, which need not be linux, but does need to comply with the IVC protocol.  Think of `remote` as the untrusted guest, running linux of some flavor. 
 
-Concretely: `remote` writes a message into slot N of a fixed array,
-then bumps a counter. `local` watches the counter move, reads slot N, and bumps a
-counter of its own. That's the whole mechanism — two free-running counters and an
-array of fixed-size slots, one such array per direction, `remote` -> `local`, `local` -> `remote`. The code terms this relationship a `peer`. There can be many peers but for the purpose of understanding we will focus on 1 peer relationship. 
+Concretely: `remote` writes a message into slot N of a fixed array, then bumps a counter. `local` watches the counter move, reads slot N, and bumps a
+counter of its own. That's the whole mechanism — two free-running counters and an array of fixed-size slots, one such array per direction, `remote` -> `local`, `local` -> `remote`. The code terms this relationship a `peer`. There can be many peers but for the purpose of understanding we will focus on 1 peer relationship. 
 ## What uses it?
 
 ### DRIVE OS — one Linux guest beside a rack of service partitions
@@ -47,8 +39,7 @@ The shape that actually ships today, a dirty Linux guest full of who know what a
 
 A few things fall out of that picture.
 
-- **The `local` end is a service partition, and it isn't Linux.** The far side of
-  every IVC line is an HVRTOS binary. That's the concrete version of the "need not
+- **The `local` end is a service partition, and it isn't Linux.** The far side of every IVC line is an HVRTOS binary. That's the concrete version of the "need not
   be Linux, does need to comply with the protocol" definition above.
 - I am reading "Guest Operating System" as could be QNX or LINUX
 - I am inferring that SoC resource calls go to the HyperVisor through a standard hypercall implementation and not IVC.
@@ -60,8 +51,7 @@ The other one,  NVIDIA's IGX gives two architectures for Thor, the second being 
 
 # Tegra IVC from the lens of Binder
 
-Binder is the IPC I know best, so it's the ruler I reached for. Both are in-kernel
-IPC between two parties that don't trust each other symmetrically. That is close
+Binder is the IPC I know best, so it's the ruler I reached for. Both are in-kernel IPC between two parties that don't trust each other symmetrically. That is close
 to the end of the resemblance.
 
 |                             | Binder                                                                                                               | Tegra IVC                                    |
@@ -74,8 +64,7 @@ to the end of the resemblance.
 | Loops                       | 43                                                                                                                   | **0**                                        |
 | Locks, atomics, refcounts   | 79                                                                                                                   | **0**                                        |
 
-A Binder transaction describes itself. It says what it is (`code`), how long it is
-(`data_size`), what objects it carries (a typed array with seven possible types,
+A Binder transaction describes itself. It says what it is (`code`), how long it is (`data_size`), what objects it carries (a typed array with seven possible types,
 including file descriptors), and who sent it, classic TLV. An IVC message says a counter moved.
 
 The identity row is the one that matters most, and it's one line of kernel:
@@ -84,10 +73,8 @@ The identity row is the one that matters most, and it's one line of kernel:
 t->sender_euid = task_euid(proc->tsk);
 ```
 
-The sender doesn't supply that. The kernel fills it in from the sending task,
-which is the entire reason Binder can be an authorization surface — every
-`checkCallingUid()` in the framework above it is resting on that assignment. IVC
-has nothing to forge because it has no field to forge. It also has no way to tell
+The sender doesn't supply that. The kernel fills it in from the sending task, which is the entire reason Binder can be an authorization surface — every
+`checkCallingUid()` in the framework above it is resting on that assignment. IVC has nothing to forge because it has no field to forge. It also has no way to tell
 you who's on the other end.
 
 So the two files fail in different places. Binder's risk is concentrated in the kernel's own bookkeeping: an object graph, reference counts, a per-process buffer allocator, and seventy-nine lock, atomic and refcount operations. That's a lot of state to keep straight while parsing something an untrusted app wrote. `ivc.c` keeps no state of that kind at all — no allocation, no loop, no lock — and a file with nothing to get wrong mostly doesn't.
@@ -116,7 +103,16 @@ static const struct file_operations ivc_fops = {
 # Let's Audit Some Code!
 Now that we know the shape of the Tegra IVC surface what are we looking for? Well, the killer bug would be if we could manipulate a peer somehow. Could we get some memory corruption on the "safe" `local` guest via IVC from a hostile `remote` peer? How about an illegal state transition? 
 
-This points squarely at the shared memory as the attack surface. A hostile guest is bound only by the permissions of the hypervisor so there is no need to conform to IVC in the sense of honoring its protocol. Its a small surface, and to continue looking at it through the lens of binder I though fuzzing it would be no problem based on concepts from the great Android Red Team blog [binder-fuzzing](https://androidoffsec.withgoogle.com/posts/binder-fuzzing/) by Zi Fan Tan, Gulshan Singh,  and Eugene Rodionov. 
+This points squarely at the shared memory as the attack surface. A hostile guest is bound only by the permissions of the hypervisor so there is no need to conform to IVC in the sense of honoring its protocol. 
+## Thoughts on Hypervisor permissions for the shared memory
+I was not going to RE the Hypervisor. So I had to make some assumptions about what the permissions of the given memory were. The problem here is that I dont know any implementation that has permissions granular enough to handle what this IVC implementation does. Essentially this implementation would need 64B granularity. That is because there is a 128B header where the `tx` side needs to write to the first half and the `rx` side needs to write to the second half (how that works we will cover below). If the hypervisor does not support this and only supports the page level permissions I am used to it could be a big problem depending on the IVC Caller implementation as page level permissions allow a hostile peer to at the very least read or write both rings header values, and most likely some or all of the data. 
+
+Two things would need to happen in order for a direct compromise of a peer based on IVC via shared memory and ivc.c claims responsibility for neither of them: 
+1. Hypervisor doesn't support permission granularity down to 64B
+2. The Caller of IVC on the `local` (non-hostile side) needs to do something with the data that is useful for exploitation
+I am not looking at the Callers or the Hypervisor in this post so I am giving them the benefit of the doubt. 
+## It's a small surface
+But, I continued looking at it through the lens of binder so I thought fuzzing it would be no problem based on concepts from the great Android Red Team blog [binder-fuzzing](https://androidoffsec.withgoogle.com/posts/binder-fuzzing/) by Zi Fan Tan, Gulshan Singh,  and Eugene Rodionov. 
 
 So that's what I did. I setup the Linux Kernel Library (LKL), with a little harness to dumb fuzz the shared IVC memory acting as the hostile `remote` peer while transitioning through operations on the `local` guest. 
 ## What's on the wire
@@ -143,7 +139,6 @@ struct tegra_ivc_header {
 ```
 
 That's the whole on-wire vocabulary. No length field, no type field, no offset, no sequence number, no magic, no identity of the sender. Framing, length and type are somebody else's job. Not much to fuzz...
-
 ### But where's the data at?
 What is the point of Inter VM communication if you are not communicating anything? Well, that is where IVC says "Not my problem." again. While IVC does name the data `frame`, the buffers used are provided by the caller, the frame size is calculated by the caller, the number of frames are set by the caller. IVC does not touch the frames, it only lets the caller know when they are ready (see step 5 below). 
 #### Write Example
@@ -157,7 +152,6 @@ For a few reasons:
 -  I didnt really care about crashing or gaining execution on my own vm ( was assuming that anyway ) I want to affect the peer.
 
 This does become a problem under the userspace LPE threat model though, so its something I would test if I were considering `ivc-cdev.c` in the nvidia oot as well. 
-
 ## State machine
 Due to the fact that we essentially have two 32bit words to play with as the hostile peer, `count` and `state`, it's imperative that the state machine be checked as that is 50% of our attack surface, lol. At first glance the state space is tiny `enum tegra_ivc_state {TEGRA_IVC_STATE_ESTABLISHED = 0, TEGRA_IVC_STATE_SYNC, TEGRA_IVC_STATE_ACK};`, that's it, so you can only have `3^2 == 9` `local`/`remote` states. 
 
@@ -204,27 +198,114 @@ Let's follow that example, find some janky looking transition points, and see if
 #### Potential Jank point 1
 State is only changed on call to `tegra_ivc_reset` or `tegra_ivc_notified` , note that `tegra_ivc_notified` is action #7. There are only two calls to IVC for a write `get_next_frame` and `advance`, so that makes it simple where to try and target a state change, right in between those two calls. Can we get one of those state changed based actions to trigger a desync between the two calls such as `tx.count == 54` -> `get_next_frame` -> `notify` -> `tx.count == 0` -> `advance`, would this make `advance` work on `54` or `0`? This means it might not be a corruption that ASAN could catch. Therefore one addition was needed to the fuzzer that wasn't in the red team blog. I needed some type of oracle in the harness to show that the frame sent was the frame read. 
 
-## Pass one: the peer is signed firmware
-
-It doesn't hold here. A slot's offset from the start of its region is
-
+Ironically, if the in-tree caller implementation had followed the guidance in `ivc.h` there would be a real finding here:
 ```c
-sizeof(struct tegra_ivc_header) + ivc->frame_size * frame
+/**
+ * tegra_ivc_notified - handle internal messages
+ * @ivc		pointer of the IVC channel
+ *
+ * This function must be called following every notification.
+ *
+ * Returns 0 if the channel is ready for communication, or -EAGAIN if a channel
+ * reset is in progress.
+ */
+int tegra_ivc_notified(struct tegra_ivc *ivc);
 ```
 
-and `frame` is always one of two positions that live in the driver's own `struct tegra_ivc`, not in shared memory. The peer supplies counters, a state word and slot contents. It never supplies the frame index. Three `WARN_ON(frame >= ivc->num_frames)` guards sit on the frame-access paths anyway. In the configuration the in-tree caller uses, two of them are short-circuited, so
-only one ever runs.
+### Let the fuzzer run...
+Now that the fuzzer is a little smarter and finding somethings lets build the mental model a bit more and take a look at one of the few safety checks that exist.
+#### tegra_ivc_check_params
+```c
+static int tegra_ivc_check_params(unsigned long rx, unsigned long tx,
+				  unsigned int num_frames, size_t frame_size)
+{
+	// Lots of alignment checks cut for size.
 
+	if (rx < tx) {
+		if (rx + frame_size * num_frames > tx) {
+			pr_err("queue regions overlap: %#lx + %zx > %#lx\n",
+			       rx, frame_size * num_frames, tx);
+			return -EINVAL;
+		}
+	} else {
+		if (tx + frame_size * num_frames > rx) {
+			pr_err("queue regions overlap: %#lx + %zx > %#lx\n",
+			       tx, frame_size * num_frames, rx);
+			return -EINVAL;
+		}
+	}
 
+	return 0;
+}
+```
+This overlap check makes sense, we dont want `tx` and `rx` rings clobbering each other. Let's do some Desk Checking:
+if `tx == 100`, `frame_size == 5`, `num_frames == 1`, and `rx == 105`, that should have `tx` and `rx` butt right up against each other but not overlap since 5 bytes would be at addrs 100, 101, 102, 103, 104 right?
+So tx is `100 + 5 * 1 == 105` and `rx < tx` does not hold in this case so we use the bottom check. No problem, `105 (tx + frame_size * num_frames) > 105 (rx) == false` we pass the check as we should. 
 
+Can we use a zero somewhere, that always trips people up? So `tx == 100`, `frame_size == 0`, `num_frames == 1`, and `rx == 100` should be interesting because in the case we did above `rx` and `tx` were the same number and passed. Again we fall through to the bottom check because (100 < 100) does not hold. So we end up with `100 (tx + frame_size * num_frames) > 100 (rx) == false` we pass the check and we shouldn't... 
 
+Is this a bug? Yes, in the sense that it is specifically trying to check for overlap and it missed a case. However, as a caller you can by design do so much worse already. Further, in the threat model of dorking with a peer this provides nothing, it would only confuse your VM's setup and prevent comms to the peer as a caller since both your `rx` and `tx` queues are stacked on each other per below. So a correctness bug at most.
+``` 
+addr 100                                                     addr 128            addr 128 (no increase due to frame_size == 0)
+    ┌───────────────────────────────────────────────────────────────┬──────────────────┐        
+tx  | tegra_ivc_header {count, state, <pad>} tx, {count, <pad>} rx  |     frames       |
+    ├───────────────────────────────────────────────────────────────┼──────────────────┤  
+rx  │ tegra_ivc_header {count, state, <pad>} tx, {count, <pad>} rx  |     frames       |   
+    └───────────────────────────────────────────────────────────────┴──────────────────┘  
+```
 
+BUT WAIT... my diagram is wrong... I had a mental model of the tx/rx queue that I used to write the diagram for this bug which included the header. The header is not included in `check_params`?!? Really what `check_params` just did was allow this:
+``` 
+addr 100           addr 100 (no increase due to frame_size == 0)
+    ┌──────────────────┐        
+tx  |     frames       |
+    ├──────────────────┤  
+rx  │     frames       |   
+    └──────────────────┘  
+```
+When it was trying to enforce this by code:
+``` 
+addr 100       addr 105 ( if frame_size == 5 and 1 frame)
+    ┌─────────────┬────────────┐        
+    |  tx frames  |  rx frames | 
+    └─────────────┴────────────┘  
+```
+But really intended to enforce this:
+``` 
+addr 100                      addr 233                       addr 366 ( hdr + frame_size 5, 1 frame)
+    ┌────────────────┬─────────────┬────────────────┬────────────┐        
+    | tx ivc_header  | tx frames   |  rx ivc_header | rx frames  | 
+    └────────────────┴─────────────┴────────────────┴────────────┘  
+```
+Otherwise this is just a frame overlap check, and that is problematic since frames might not overlap but maybe its possible that a `tegra_ivc_header` could overlap with frames since the header is not counted... More desk checking:
+Let's use the `frame_size == 5` and `num_frames == 1`since gives us something smaller than the header (128) give `check_params` which lets us "not overlap" with just 5 bytes, we know this passes from the first example. 
+``` 
+addr 100,addr 105        addr 228
+    ┌────────────────────────┬──────────────────┐        
+tx  | ivc_header             |     frames       |
+    └────────────────────────┴───┬──────────────┴─────┐  
+rx        │ ivc_header           |     frames         |   
+          └──────────────────────┴────────────────────┘  
+    └──┬──┘
+     checker says we have space for one 5B frame, no overlap, we good.
+```
+Is this now anything more than a correctness bug? I would still classify this as a correctness bug within `ivc.c`
 
+This is due to how little responsibility the IVC implementation takes. As I have said before IVC pushes the hard work mostly up to the caller, but what we care about here in order to judge whether this is a correctness or security issue depends on whether the hypervisor took up the deferred responsibility of managing the memory.  So if it is a security issue, that issue is in the hypervisor permission granularity and its a bigger problem than this. 
+# Close
 
+It is clear that as far as IPC goes the design decisions made here about as far as you can get from Binder. This has its pros and cons in that the actual IVC implementation attack surface is tiny, a count and a state, that's about it. This could be a deliberate call in that if you have multiple disparate OSs (e.g. Linux and QNX) the contract you need to adhere to is correspondingly tiny. 
 
-## Close
+However, I think that is where the good news ends. In the Android ecosystem fragmented implementations have been the bane of Android security. This is most recently exemplified by Calif's recent post [here](https://calif.io/research/oempocalypse). And it seem to be that this is the direction that Tegra IVC is moving in, as it takes responsibility for nothing and pushes responsibility mostly to the caller. This means that each use of IVC is suspect:
+- Did the caller setup the memory, frame numbers, frame size exactly correct?
+	- for all peers?
+- Did the caller allow for any race conditions (e.g. between calls and notifications)?
+- Is a peer even using `ivc.c` or did they roll their own?
+- If using `ivc.c` which tree did it come from?
 
+This kind of fragmentation is tech-debt Google has been digging out of for years with the latest being the push for Generic Kernel Images (GKI). Binder though has not suffered such a fate, it is a single implementation not left up to the OEMs and absolutely hammered by the security community until it is one of the hardest attack surfaces on Android. 
 
-
----
+Maybe this is my bias talking, but I think my suggestion to Nvidia would be to follow Binder's example. They are in the same space of security critical devices, both embedded, both having to deal with untrusted vendor shenanigans. Fragmentation may buy security through obscurity, but that only works until the tech is important enough to be a target. I don't know a company who doesn't want their tech to be important.
+# Future work
+As it stands I probably wont look much more at Tegra. If I do it is obvious that `ivc.c` is not the target, caller implementations, `ivc-cdev.c` or something else adjacent to `ivc.c` is what I would look at. 
 
