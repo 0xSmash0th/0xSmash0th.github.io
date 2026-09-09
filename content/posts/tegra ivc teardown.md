@@ -195,24 +195,14 @@ What can make this state machine complex is that a peer can change state at any 
 So now that I know a bit more about the state machine, it's time to make the fuzzer less dumb. Since I am already using LKL, and I am already inspired by Android Red Team's blog on fuzzing binder it makes sense to continue on that path. In that blog they describe one of the interesting characteristics of LKL. It is a single process, in order to do task management it has to yield, no background task, no async work (in the general meaning, workqueues still work just serially against everything else), this can be a pain in the ass, or an opportunity. The clever people who wrote the blog used it as an opportunity to coerce what looked like racy conditions into being fuzzed by using the single process yielding substrate of LKL to interleave threads with an amount of control that would otherwise not be possible. 
 
 Let's follow that example, find some janky looking transition points, and see if we can get a our hostile `remote` peer interleaved with our well behaved `local` in a way that might affect `local`.
-#### Potential Jank point 1
-State is only changed on call to `tegra_ivc_reset` or `tegra_ivc_notified` , note that `tegra_ivc_notified` is action #7. There are only two calls to IVC for a write `get_next_frame` and `advance`, so that makes it simple where to try and target a state change, right in between those two calls. Can we get one of those state changed based actions to trigger a desync between the two calls such as `tx.count == 54` -> `get_next_frame` -> `notify` -> `tx.count == 0` -> `advance`, would this make `advance` work on `54` or `0`? This means it might not be a corruption that ASAN could catch. Therefore one addition was needed to the fuzzer that wasn't in the red team blog. I needed some type of oracle in the harness to show that the frame sent was the frame read. 
-
-Ironically, if the in-tree caller implementation had followed the guidance in `ivc.h` there would be a real finding here:
-```c
-/**
- * tegra_ivc_notified - handle internal messages
- * @ivc		pointer of the IVC channel
- *
- * This function must be called following every notification.
- *
- * Returns 0 if the channel is ready for communication, or -EAGAIN if a channel
- * reset is in progress.
- */
-int tegra_ivc_notified(struct tegra_ivc *ivc);
-```
-
-### Let the fuzzer run...
+#### Potential Jank point 1, notification interleave
+State is only changed on call to `tegra_ivc_reset` or `tegra_ivc_notified` , note that `tegra_ivc_notified` is action #7. There are only two calls to IVC for a write `get_next_frame` and `advance`, so that makes it simple where to try and target a state change, right in between those two calls. Can we get one of those state changed based actions to trigger a desync between the two calls such as `tx.count == 54` -> `get_next_frame` -> `notify` ->  `notified` -> `tx.count == 0` -> `advance`, would this make `advance` work on `54` or `0`? This means it might not be a corruption that ASAN could catch since its within the given allocation. Therefore one addition was needed to the fuzzer that wasn't in the red team blog. I needed some type of oracle in the harness to show that the frame sent was the frame read. 
+#### Potential Jank point 2, state machine
+State machines are hard. While this one is tiny and the corresponding actions are trivial there are two possibilities which look plausible for affecting a peer. 
+- Can we force an illegal state transition that hot loops a peer (DoS)?
+- Can we hold a hold a state that hot loops the peer (DoS)?
+This is seems plausible because there are no sleeps or waits, or anything I could see that prevents a peer from retrying a move through the state graph as fast as possible.
+## Let the fuzzer run...
 Now that the fuzzer is a little smarter and finding somethings lets build the mental model a bit more and take a look at one of the few safety checks that exist.
 #### tegra_ivc_check_params
 ```c
@@ -292,6 +282,22 @@ rx        │ ivc_header           |     frames         |
 Is this now anything more than a correctness bug? I would still classify this as a correctness bug within `ivc.c`
 
 This is due to how little responsibility the IVC implementation takes. As I have said before IVC pushes the hard work mostly up to the caller, but what we care about here in order to judge whether this is a correctness or security issue depends on whether the hypervisor took up the deferred responsibility of managing the memory.  So if it is a security issue, that issue is in the hypervisor permission granularity and its a bigger problem than this. 
+## Check the fuzzer
+### What happend with janky code point 1
+Ironically, if the in-tree caller implementation had followed the guidance in `ivc.h` there would be a real finding here:
+```c
+/**
+ * tegra_ivc_notified - handle internal messages
+ * @ivc		pointer of the IVC channel
+ *
+ * This function must be called following every notification.
+ *
+ * Returns 0 if the channel is ready for communication, or -EAGAIN if a channel
+ * reset is in progress.
+ */
+int tegra_ivc_notified(struct tegra_ivc *ivc);
+```
+### What happend with with janky code point 2
 # Close
 
 It is clear that as far as IPC goes the design decisions made here about as far as you can get from Binder. This has its pros and cons in that the actual IVC implementation attack surface is tiny, a count and a state, that's about it. This could be a deliberate call in that if you have multiple disparate OSs (e.g. Linux and QNX) the contract you need to adhere to is correspondingly tiny. 
@@ -303,9 +309,11 @@ However, I think that is where the good news ends. In the Android ecosystem frag
 - Is a peer even using `ivc.c` or did they roll their own?
 - If using `ivc.c` which tree did it come from?
 
+i.e. a more correct compare and contrast with Binder would have included a Caller and Hypervisor.
+
 This kind of fragmentation is tech-debt Google has been digging out of for years with the latest being the push for Generic Kernel Images (GKI). Binder though has not suffered such a fate, it is a single implementation not left up to the OEMs and absolutely hammered by the security community until it is one of the hardest attack surfaces on Android. 
 
-Maybe this is my bias talking, but I think my suggestion to Nvidia would be to follow Binder's example. They are in the same space of security critical devices, both embedded, both having to deal with untrusted vendor shenanigans. Fragmentation may buy security through obscurity, but that only works until the tech is important enough to be a target. I don't know a company who doesn't want their tech to be important.
+Maybe this is my bias talking, but I think my suggestion to Nvidia would be to follow Binder's example. They are in the same space of security critical devices, both embedded, both having to deal with untrusted vendor shenanigans. Fragmentation may buy security through obscurity, but that only works until one stack implementation is important enough to be a target. I don't know a company who doesn't want their tech to be important.
 # Future work
 As it stands I probably wont look much more at Tegra. If I do it is obvious that `ivc.c` is not the target, caller implementations, `ivc-cdev.c` or something else adjacent to `ivc.c` is what I would look at. 
 
