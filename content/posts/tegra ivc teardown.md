@@ -32,8 +32,7 @@ counter of its own. That's the whole mechanism — two free-running counters and
 
 The shape that actually ships today, a dirty Linux guest full of who know what apps and an ostensibly safe set of peers trying to make sure the dirty Linux guest doesn't explode your car. In other words, a type-1 hypervisor whose entire partition set is frozen at build time by the **PCT** (Platform Configuration Table). Beside the single Linux guest sit roughly ten small **service partitions**. I do not know if each of these services is a `peer` in the sense of IVC but I will continue under that assumption.
 
-> [!danger] I have not RE'ed the Hypervisor, QNX, or any other services provided by DriveOS. Therefore it is only my inference from the design that these services are each a `peer`
-
+> [!danger] I have not RE'ed the Hypervisor, QNX, or any other services provided by DriveOS. Therefore it is only my inference from the design/docs that these services are each a `peer`
 
 ![DriveOS block diagram](/static/tegra_teardown/archi_foundation_image3.png)
 
@@ -375,7 +374,39 @@ A sharp contrast with IVC. Xen's analogue of the over-full condition is a protoc
 A per-event-channel count of spurious notifications, doubling the delay before re-enabling the interrupt, capped at HZ, and reset to zero the moment a notification turns out to be real. 
 
 Nice! My geometric backoff idea does work for a hypervisor. They have some real defense-in-depth though.
+#### The patch
+There are a lot of open questions since I have not looked at the hypervisor(s), for this issue in particular the question is: Does the hypervisor enforce some usage limit that prevents a DoS accross the SoC? My educated guess is to say that some of them might, most likely the newer implementations (IGX Thor). However, this doesn't prevent a victim guest from hot looping with any resource its allow from the hypervisor preventing communication with any other peer. 
 
+The least invasive way I thought to do this is via the geometric backoff. So here is the patch:
+```c
+ void tegra_ivc_reset(struct tegra_ivc *ivc)
+ {
+        unsigned int offset = offsetof(struct tegra_ivc_header, tx.count);
+ 
++       tegra_ivc_resync_restart(ivc);
++
+        tegra_ivc_header_write_field(&ivc->tx.map, tx.state, TEGRA_IVC_STATE_SYNC);
+        tegra_ivc_flush(ivc, ivc->tx.phys + offset);
+        ivc->notify(ivc, ivc->notify_data);
+        
+@@ -546,6 +664,18 @@ int tegra_ivc_notified(struct tegra_ivc *ivc)
+        }
+ 
++       if (tegra_ivc_header_read_field(&ivc->tx.map, tx.state) != tx_state)
++               tegra_ivc_resync_restart(ivc);
++       else if (tx_state != TEGRA_IVC_STATE_ESTABLISHED)
++               tegra_ivc_resync_wait(ivc);
++
+        if (tx_state != TEGRA_IVC_STATE_ESTABLISHED)
+                return -EAGAIN;
+
+```
+
+Two functions are created `tegra_ivc_resync_restart` and `tegra_ivc_resync_wait`. No change in state -> start the backoff, change in state -> reset the backoff. 
+
+As I started looking at how to patch this I realized there were more opertunites to hot loop. So I made the patch more generic than what I started with, originally it keyed off of only the SYNC state. 
+
+As a side note this patch also made fuzzing work a bit better. With the hot loop spinning at 1.5 M iterations/s the LKL thread pegged the core and the symbolizer subprocess couldn't make progress on a crash dump. With the backoff armed the loop sits in a bounded wait with `cpu_relax()`, the symbolizer gets CPU, the backtrace completes.
 # Close
 
 It is clear that as far as IPC/IVC goes the design decisions made here about as far as you can get from Binder. This has its pros and cons in that the actual IVC implementation attack surface is tiny, a count and a state, that's about it. This could be a deliberate call in that if you have multiple disparate OSs (e.g. Linux and QNX) the contract you need to adhere to is correspondingly tiny. 
