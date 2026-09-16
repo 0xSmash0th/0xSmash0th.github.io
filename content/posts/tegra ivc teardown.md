@@ -2,60 +2,62 @@
 title = 'Tegra IVC Teardown'
 date = 2026-09-02T00:00:00Z
 draft = true
-description = "Is Tegra's Inter VM communication plagued with the same issues as Binder?"
+description = "Is Tegra's Inter VM communication plagued with the same issues as Binder was?"
 tags = ['kernel', 'linux', 'threat-modeling', 'audit', 'arm']
 toc = true
 +++
-# TL;DR
+## TL;DR
 
-- **No vulnerability (that I found) on the interesting "Hostile peer" surface other than a DoS.** Everything Binder does for you inside the kernel (framing, length, type, sender identity) IVC delegates to a different layer. 
-- **Coming from Binder, the first thing you notice is everything that isn't there.** No device node, no ioctl, no uapi header. Three `u32`s on the wire, and no length, type, identity or sequence field among them. Zero allocations,  zero loops and zero locks in the whole file.
-- **The classic shared-ring bug isn't present, and not by accident.** The remote end supplies counters, a state word and message bytes, but never the index used to compute an address. That holds even against a remote writing every byte of both shared regions to pivot out. Good job killing the Type, Length, Value (TLV) that causes so much trouble!
+Short answer to the question is Tegra's IVC (Inter-VM Communication) plagued with the same issues as Binder? In a word, no. 
+- **No memory corruption on the interesting "hostile peer" surface.** Everything Binder does for you inside the kernel (framing, length, type, sender identity) IVC delegates to a different layer.
+- **Coming from Binder, the first thing you notice is everything that isn't there.** No device node, no ioctl, no uapi header. Three `u32`s on the wire, and no length, type, identity or sequence field among them. Zero allocations, zero loops and zero locks in the whole file.
+- **The DoS: park on `SYNC` and walk away.** The peer parks its state word on `SYNC` and stops touching the ring; the victim's `tegra_ivc_notified()` returns `-EAGAIN` forever (7,651,085 passes in 5 s in my harness) and the caller's retry loop never exits. In mainline that caller is `bpmp-tegra186.c:155-156`. I wrote a geometric-backoff patch which reduces the cost but does not bound the loop.
+- **The classic shared-ring bug isn't present, and not by accident.** The `remote` end supplies counter, state word and message bytes, but never a index used to compute an address. That holds even against a `remote` writing every byte of both shared regions to pivot out. Good job killing the Type, Length, Value (TLV) that causes so much trouble!
+## Tegra IVC 101
+### Why look at it?
+I come from an Android background, as such I have paid my dues against Binder, like all good Android researchers do, and have the scars to prove it. As an inter-process communication (IPC) surface I thought it would be interesting to compare and contrast since I haven't worked much with any IVC.
 
-# Tegra IVC 101
-## Why look at it?
-I come from a Android background, as such I have paid my dues against binder, like all good Android researchers do, and have the scars to prove it. As a IPC surface I thought it would be interesting to compare and contrast since I haven't worked much with IVC. 
+Someone told me about this new AI thing so I thought I would poke around in AI adjacent code (stats is *mathmagic*). Apparently NVIDIA plays a part in this new AI hotness, figuratively and literally if you have ever turned your laptop into a portable heater via AI query.
 
-Someone told me about this new AI thing so I thought I would poke around in AI adjacent code (stats is mathmagic to me). Apparently NVIDIA plays a part in this new hotness, figuratively and literally if you have ever turned your laptop into a portable heater via AI query. 
+I have no Tegra hardware, no hypervisor, etc. Just some code and a bit of time. So this is testing the water to determine if I wanted to invest more time/money to do more serious work on NVIDIA.
+### What is it?
 
-I have no Tegra hardware, no hypervisor, etc. Just some code and a bit of time.  So this is testing the water to determine if I wanted invest some more time/money to do more serious work on Nvidia.
-## What is it?
+Tegra IVC is a lock-free single-producer/single-consumer ring in a block of memory two processors both map. I will be using the terms `local/victim` and `remote/attacker` in this breakdown. Think of `local` as a vetted service, which need not be Linux, but does need to comply with the IVC protocol. Think of `remote` as the untrusted guest, running Linux of some flavor.
 
-It's a lock-free single-producer/single-consumer ring in a block of memory two processors both map. I will be using the terms `local/victim` and `remote/attacker` in this breakdown. Think of `local` as a vetted service, which need not be linux, but does need to comply with the IVC protocol.  Think of `remote` as the untrusted guest, running linux of some flavor. 
+Concretely: `remote` writes a message into slot N of a fixed array, then bumps a counter. `local` watches the counter move, reads slot N, and bumps a counter of its own. That's the whole mechanism, two free-running counters and an array of fixed-size slots, one such array per direction, `remote` -> `local`, `local` -> `remote`. The code terms this relationship a `peer`. A peer is a *service* on the other end of one channel, not a VM. One guest can sit behind many services, and one guest can hold many peer relationships at once. DRIVE OS picture below is exactly that shape, a single Linux guest with a channel to each of about ten service partitions. So the number of peers is not the number of guests. For the purpose of understanding we will focus on a single peer relationship.
+### What uses it?
 
-Concretely: `remote` writes a message into slot N of a fixed array, then bumps a counter. `local` watches the counter move, reads slot N, and bumps a counter of its own. That's the whole mechanism, two free-running counters and an array of fixed-size slots, one such array per direction, `remote` -> `local`, `local` -> `remote`. The code terms this relationship a `peer`. There can be many peers but for the purpose of understanding we will focus on a single peer relationship. 
-## What uses it?
+#### DRIVE OS — one Linux guest beside a rack of service partitions
 
-### DRIVE OS — one Linux guest beside a rack of service partitions
+The shape that actually ships today, a dirty Linux guest full of who-knows-what apps and an ostensibly safe set of peers trying to make sure the dirty Linux guest doesn't explode your car. In other words, a hypervisor whose entire partition set is frozen at build time by the **PCT** (Platform Configuration Table). Beside the single Linux guest sit roughly ten small **service partitions**. I do not know for sure if each of the services below is a `peer` in the sense of IVC but I will continue under that assumption based on docs/code.
 
-The shape that actually ships today, a dirty Linux guest full of who know what apps and an ostensibly safe set of peers trying to make sure the dirty Linux guest doesn't explode your car. In other words, a type-1 hypervisor whose entire partition set is frozen at build time by the **PCT** (Platform Configuration Table). Beside the single Linux guest sit roughly ten small **service partitions**. I do not know for sure if each of the services below is a `peer` in the sense of IVC but I will continue under that assumption based on docs/code.
+> **Caveat** I have not reverse-engineered the hypervisor, QNX, or any of the other services DRIVE OS provides. That each of these services is a `peer` in the IVC sense is my inference from the design and the docs, they don't have to be and it's not something I verified.
 
-> [!danger] I have not RE'ed the Hypervisor, QNX, or any other services provided by DriveOS. Therefore it is only my inference from the design/docs that these services are each a `peer`
-
-![DriveOS block diagram](/static/tegra_teardown/archi_foundation_image3.png)
+![DRIVE OS block diagram](/static/tegra_teardown/archi_foundation_image3.png)
 
 A few things fall out of that picture.
 - **The `local` end is a service partition, and it isn't Linux.** The far side of every IVC line is an HVRTOS binary. That's the concrete version of the "need not be Linux, does need to comply with the protocol" definition above.
-- I am reading "Guest Operating System" as could be QNX or LINUX
-- I am inferring that SoC resource calls go to the HyperVisor through a standard hypercall implementation and not IVC.
-### IGX Thor — a Linux VM beside a QNX safety VM
-The other one,  NVIDIA's IGX gives two architectures for Thor, the second being "NV Hypervisor, supporting a Linux VM and a QNX VM on CCPLEX."
+- I am reading "Guest Operating System" as meaning it could be QNX or Linux.
+- I am inferring that SoC (system-on-chip) resource calls go to the hypervisor through a standard hypercall implementation and not IVC.
+#### IGX Thor — a Linux VM beside a QNX safety VM
+The other one, NVIDIA's IGX gives two architectures for Thor, the second being "NV Hypervisor, supporting a Linux VM and a QNX VM on CCPLEX." CCPLEX is the CPU complex (Arm application cores) so that sentence is putting both guests on the same cluster rather than on separate processor islands.
 
 ![IGX Thor stack](/static/tegra_teardown/full-stack-platform-for-enterprise-edge-ai.jpg)
 
-# Tegra IVC from the lens of Binder
+## Tegra IVC from the lens of Binder
 
 Binder is the IPC I know best, so it's the ruler I reached for. Both are in-kernel comms between two parties that don't trust each other symmetrically. That is close to the end of the resemblance.
 
 |                             | Binder                                                                                                               | Tegra IVC                                    |
 | --------------------------- | -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
 | Core file                   | `binder.c`, 7,294 lines                                                                                              | `ivc.c`, **721**                             |
-| uapi                        | `binder.h` — 640 lines, 14 ioctls, 21 `BC_` commands, 24 `BR_` returns, 7 object types                               | none                                         |
+| uapi                        | `binder.h` — 640 lines, 14 ioctls, 22 `BC_` commands, 24 `BR_` returns, 7 object types                               | none                                         |
 | On the wire                 | target, cookie, `code`, `flags`, `sender_pid`, `sender_euid`, `data_size`, `offsets_size`, plus a typed object array | three `u32`s — two counters and a state word |
 | Userspace entry             | `misc_register`, openable by any app                                                                                 | none in-tree                                 |
 | Allocation on the data path | 14 sites, plus a per-process buffer allocator                                                                        | **0**                                        |
 | Loops                       | 43                                                                                                                   | **0**                                        |
 | Locks, atomics, refcounts   | 79                                                                                                                   | **0**                                        |
+The loop and lock rows are keyword greps, so treat them as orders of magnitude rather than exact figures, the point is that both are double digits against a hard zero, not the last digit of either.
 
 A Binder transaction describes itself. It says what it is (`code`), how long it is (`data_size`), what objects it carries (a typed array with seven possible types, including file descriptors), and who sent it, classic TLV. A Tegra IVC message says a counter moved.
 
@@ -65,13 +67,13 @@ The identity row is the one that matters most, and it's one line of kernel:
 t->sender_euid = task_euid(proc->tsk);
 ```
 
-The sender doesn't supply that. The kernel fills it in from the sending task, which is the entire reason Binder can be an authorization surface — every `checkCallingUid()` in the framework above it is resting on that assignment. IVC has nothing to forge because it has no field to forge. It also has no way to tell you who's on the other end.
+The sender doesn't supply that. The kernel fills it in from the sending task, which is the entire reason Binder can be an authorization surface. Every `checkCallingUid()` in the framework above it is resting on that assignment. IVC has nothing to forge because it has no field to forge. It also has no way to tell you who's on the other end.
 
-So the two files fail in different places. Binder's risk is concentrated in the kernel's own bookkeeping: an object graph, reference counts, a per-process buffer allocator, and seventy-nine lock, atomic and refcount operations. That's a lot of state to keep straight while parsing something an untrusted app wrote. `ivc.c` keeps no state of that kind at all — no allocation, no loop, no lock — and a file with nothing to get wrong mostly doesn't.
+So the two files fail in different places. Binder's risk is concentrated in the kernel's own bookkeeping: an object graph, reference counts, a per-process buffer allocator, and seventy-nine lock, atomic and refcount operations. That's a lot of state to keep straight while parsing something an untrusted app wrote. `ivc.c` keeps no state of that kind at all, no allocation, no loop, no lock, and a file with nothing to get wrong mostly doesn't.
 
-**That's the trap.** Anyone actually using IVC needs everything Binder has: framing, length, type, identity, ordering. Those requirements don't evaporate because the ring declines to provide them. They move. In-tree they move up into `bpmp.c`, or down into the hypervisor. So all of the good stuff is probably in the hypervisor if I had to guess, and closed source is typically a softer target than open source in my experience.
+**The trap.** Anyone actually using IVC needs everything Binder has: framing, length, type, identity, ordering. Those requirements don't evaporate because the ring declines to provide them. They move. In-tree they move up into the caller `bpmp` , or down into the hypervisor. While the particular hypervisor for IGX Thor is a statically-partitioned safety kernel with a small TCB (trusted computing base) built to a certification process (per docs) that doesn't mean all hypervisors supporting Tegra IVC will be. The combination of fragmentation problems and closed source could be good grounds for bug hunting.
 
-"No userspace entry point"  is a property of mainline. Nvidia ships a character device onto the same IVC ring, with an `ioctl` on it. e.g `/dev/ivc<N>` per below. I am trying to stick with just the IVC implementation though, `ivc.c`. 
+"No userspace entry point" is a property of mainline. NVIDIA ships a character device onto the same IVC ring, with an `ioctl` on it. e.g. `/dev/ivc<N>` per below. But again, for this post I stick with just the IVC implementation in `ivc.c`.
 [ivc-cdev.c](https://gitlab.com/nvidia/nv-tegra/linux-nv-oot/-/blob/l4t/l4t-r36.2/drivers/virt/tegra/ivc-cdev.c)
 ```c
 static const struct file_operations ivc_fops = {
@@ -87,27 +89,29 @@ static const struct file_operations ivc_fops = {
 };
 ```
 
-# Let's Audit Some Code!
-Now that we know the shape of the Tegra IVC surface what are we looking for? Well, the killer bug would be if we could manipulate a peer somehow. Could we get some memory corruption on the "safe" `local` guest via IVC from a hostile `remote` peer? However, as I mentioned the surface is tiny, some counters and state, so lets start looking for an illegal state transition and see where that leads us. 
+## Let's Audit Some Code!
+Now that we know the shape of the Tegra IVC surface what are we looking for? Well, the killer bug would be if we could manipulate a peer somehow. Could we get some memory corruption on the "safe" `local` guest via IVC from a hostile `remote` peer? The surface is tiny, some counters and state, so let's start looking for an illegal state transition and see where that leads us.
 
-Of course this points squarely at the shared memory as the attack surface. A hostile guest is bound only by the permissions of the hypervisor, there is no need to conform to IVC in the sense of honoring its protocol. 
-## The Shared Memory
-Two rings, one for tx, one for rx. Each has a 128B header which is padded out for cache coherency, in fact most of it is padding. You will also have some number of frames of some size determined by the caller following the header.  
+Of course this points squarely at the shared memory as the attack surface. A hostile guest is bound only by the permissions of the hypervisor, there is no need to conform to IVC in the sense of honoring its protocol.
+### The Shared Memory
+Two rings, one for `tx`, one for `rx`. Each has a 128B header which is padded out for cache coherency, in fact most of it is padding. You will also have some number of frames of some size determined by the caller following the header.
+
+Here is that header from both sides/rings. Note the two memory granule sizes in play, because as an attacker which one is in use could be *cough* pivotal *cough* (I am sorry, I will see myself out...).
 ![Possible mem layouts](/static/tegra_teardown/mem_params.png)
-### Thoughts on Hypervisor permissions for the shared memory
-I was not going to RE the Hypervisor. So I had to make some assumptions about what the permissions of the given memory were. The problem here is that I dont know any implementation that has permissions granular enough to handle what this IVC implementation does. Essentially this implementation would need 64B granularity. That is because there is a 128B header where the `tx` side needs to write to the first half and the `rx` side needs to write to the second half (how that works we will cover below). If the hypervisor does not support this and only supports the page level permissions I am used to it could be a big problem depending on the IVC Caller implementation as page level permissions allow a hostile peer to at the very least read or write both rings header values, and most likely some or all of the frame data. 
+#### Thoughts on hypervisor permissions for the shared memory
+I was not going to RE the hypervisor. So I had to make some assumptions about what the permissions of the given memory were. The problem here is that I don't know any implementation that has permissions granular enough to handle what this IVC implementation does. Essentially this implementation would need 64B granularity. That is because there is a 128B header where the `tx` side needs to write to the first half and the `rx` side needs to write to the second half (how that works we will cover below). If the hypervisor does not support this and only supports the page level permissions I am used to it could be a big problem depending on the IVC Caller implementation as page level permissions allow a hostile peer to at the very least read and/or write both rings' header values, and most likely some or all of the frame data.
 
-Two things would need to happen in order for a direct compromise of a peer based on what we know about the shared memory so far, and `ivc.c` claims responsibility for neither of them: 
-1. Hypervisor doesn't support permission granularity down to 64B
-2. The Caller of IVC on the `local` (non-hostile side) needs to do something with the data that is useful for exploitation.
-I am not looking at the Callers or the Hypervisor in this post so I am giving them the benefit of the doubt based on some documentation regarding the Thor platform that 64B granule permissions are set. 
-## It's a small surface
-But, I continued looking at it through the lens of binder so I thought fuzzing it would be no problem based on concepts from the great Android Red Team blog [binder-fuzzing](https://androidoffsec.withgoogle.com/posts/binder-fuzzing/) by Zi Fan Tan, Gulshan Singh,  and Eugene Rodionov. 
+Two things would both have to be true for a direct compromise of a peer, based on what we know about the shared memory so far, and `ivc.c` takes responsibility for neither:
+1. The hypervisor doesn't support permission granularity down to 64B.
+2. The caller of IVC on the `local` (non-hostile) side does something with the data that is useful for exploitation.
 
-So that's what I did. I setup the Linux Kernel Library (LKL), with a little harness to dumb fuzz the shared IVC memory acting as the hostile `remote` peer while transitioning through operations on the `local` guest. 
-## What's on the wire
+Since I am not looking at the callers or the hypervisor in this post, so for the rest of it I am going to *assume* (not conclude) that Thor part sets permissions at 64B granularity. That assumption rests on the NVIDIA documentation I could find which establishes cache-line *coherency* at that granularity but says nothing at all about *permission* granularity. see [Note 1](#notes) for more re: my assumption
+### It's a small surface
+I continued looking at it through the lens of binder so I thought fuzzing it would be no problem based on concepts from the great Android Red Team blog [binder-fuzzing](https://androidoffsec.withgoogle.com/posts/binder-fuzzing/) by Zi Fan Tan, Gulshan Singh, and Eugene Rodionov.
 
-Each direction gets a 128-byte header: a 32-bit counter and a state word for the transmit half, a counter for the receive half, padding. 
+So that's what I did. I set up LKL, with a little harness to dumb fuzz the shared IVC memory acting as the hostile `remote` peer while transitioning through operations on the `local` guest.
+### What's on the wire
+Each direction gets a 128-byte header: a 32-bit counter and a state word for the transmit half, a counter for the receive half, padding.
 ```c
 struct tegra_ivc_header {
 	union {
@@ -129,38 +133,43 @@ struct tegra_ivc_header {
 ```
 
 That's the whole on-wire vocabulary. No length field, no type field, no offset, no sequence number, no magic, no identity of the sender. Framing, length and type are somebody else's job. Not much to fuzz...
-### But where's the data at?
-What is the point of Inter VM communication if you are not communicating anything? Well, that is where IVC says "Not my problem." again. While IVC does name the data, `frame`, the buffers used are provided by the caller, the frame size is calculated by the caller, the number of frames are set by the caller. IVC does not touch the frames, it only lets the caller know when they are ready (see step 5 below). 
-#### Write Example
+#### But where's the data at?
+What is the point of inter-VM communication if you are not communicating anything? Well, that is where IVC says "Not my problem" again. While IVC does name the data, `frame`, the buffers used are provided by the caller, the frame size is calculated by the caller, the number of frames are set by the caller. IVC does not touch the frames, it only lets the caller know when they are ready (the doorbell, action #7 in the table below — `tegra_ivc_write_advance()` bumps `tx.count` and rings it, `ivc.c:356-395`).
+##### Write Example
 ![IVC Write](/static/tegra_teardown/write_simple.png)
 
-#### Why not include the frame(s) in the fuzzing runs?
+The address the caller is handed is `tx base + 128 + frame_size × tx.position`, computed from the *local* `position`, never from anything the peer wrote. Step 5 is the caller filling it, `ivc.c` never copies a byte.
+##### Why not include the frame(s) in the fuzzing runs?
 For a few reasons:
-- The goal was to target just the IVC implementation so I considered this scope creep because the data was handled by the caller not the implementation
--  I didnt really care about crashing or gaining execution on my own vm ( from the attacker perspective) I want to affect the peer.
+- The goal was to target just the IVC implementation, so I considered this scope creep because the data was handled by the caller, not the implementation.
+- I didn't really care about crashing or gaining execution on my own VM (from the attacker perspective). I want to affect the peer.
 
-This does become a problem under the userspace LPE threat model though, so its something I would test if I were considering `ivc-cdev.c` in the `nvidia-oot` as well. 
-## State machine
-Due to the fact that we essentially have two 32bit words to play with as the hostile peer, `count` and `state`, it's imperative that the state machine be checked as that is 50% of our attack surface, lol. At first glance the state space is tiny `enum tegra_ivc_state {TEGRA_IVC_STATE_ESTABLISHED = 0, TEGRA_IVC_STATE_SYNC, TEGRA_IVC_STATE_ACK};`, that's it, so you can only have `3^2 == 9` `local`/`remote` states. 
+Data would be a problem under the userspace LPE (local privilege escalation) threat model though, so it's something I would test if I were considering `ivc-cdev.c` in the `nvidia-oot` as well.
+### State machine
+Three 32-bit writable words for the hostile peer, two write and one read on the tx ring, and two reads and a write on the rx ring. In my *transmit* ring the peer (local/victim in this case) is the receiver, so `rx.count` there is *its* field by design (`tegra_ivc_advance_rx()`, `ivc.c:159-169`, writes it through the peer's `rx.map`, which is my `tx` ring). The mirror is true of for my rx ring. 
 
-There is a comment in the code which talks though the expected transitions to an established connection:
+So: `tx.count` and `tx.state` in the ring the peer transmits on, `rx.count` in the ring it receives on. It's imperative that the state machine be checked, since it is a third of the whole attack surface, lol. At first glance the state space is tiny `enum tegra_ivc_state {TEGRA_IVC_STATE_ESTABLISHED = 0, TEGRA_IVC_STATE_SYNC, TEGRA_IVC_STATE_ACK};`, that's it, so you can only have `3^2 == 9` `local`/`remote` states.
+
+There is a comment in the code (`ivc.c:410-423`) which talks through the expected transitions to an established connection:
+```text
+IVC State Transition Table - see tegra_ivc_notified()
+
+local   remote   action
+-----   ------   -----------------------------------
+SYNC    EST      <none>
+SYNC    ACK      reset counters; move to EST; notify
+SYNC    SYNC     reset counters; move to ACK; notify
+ACK     EST      move to EST; notify
+ACK     ACK      move to EST; notify
+ACK     SYNC     reset counters; move to ACK; notify
+EST     EST      <none>
+EST     ACK      <none>
+EST     SYNC     reset counters; move to ACK; notify
 ```
->  *	local	remote	action
->  *	-----	------	-----------------------------------
->  *	SYNC	EST	    <none>
->  *	SYNC	ACK	    reset counters; move to EST; notify
->  *	SYNC	SYNC	reset counters; move to ACK; notify
->  *	ACK	    EST	    move to EST; notify
->  *	ACK	    ACK	    move to EST; notify
->  *	ACK	    SYNC	reset counters; move to ACK; notify
->  *	EST	    EST	    <none>
->  *	EST	    ACK	    <none>
->  *	EST	    SYNC	reset counters; move to ACK; notify
-```
-Once the the connection is established the following states may be moved through:
-!!TODO
-Further, the actions possible are very limited at first glance. 
-```
+Once you are established, the only transition a peer can force is *back down*. 
+
+Further, the actions possible are very limited at first glance.
+```text
   ┌─────┬─────────────────────────────────────┬────────────────────┬──────────┐  
   │  #  │               action                │      address       │  value   │  
   ├─────┼─────────────────────────────────────┼────────────────────┼──────────┤  
@@ -179,20 +188,27 @@ Further, the actions possible are very limited at first glance.
   │ 7   │ ivc->notify(ivc, ivc->notify_data)  │ fn ptr set at init │ —        │
   └─────┴─────────────────────────────────────┴────────────────────┴──────────┘  
 ```
-What can make this state machine complex is that a peer can change state at any given time. So let's say as a caller using IVC you have just called `tegra_ivc_write_get_next_frame`, or as a caller you are in the middle of filling a frame or something. IVC's answer to this is again "Not my problem", there is no locking. 
-### Now that I know better, fuzz better
-Check the fuzzer, no crashes... :(  but now that I know a bit more about the state machine, it's time to make the fuzzer less dumb. Since I am already using LKL, and I am already inspired by Android Red Team's blog on fuzzing binder it makes sense to continue on that path. In that blog they describe one of the interesting characteristics of LKL. It is a single process, in order to do task management it has to yield, no background task, no async work (in the general meaning, workqueues still work just serially against everything else), this can be a pain in the ass, or an opportunity. The clever people who wrote the blog used it as an opportunity to coerce what looked like racy conditions into being fuzzed by using the single process yielding substrate of LKL to interleave threads with an amount of control that would otherwise not be possible. 
+What can make this state machine complex is that a peer can change state at any given time. So let's say as a caller using IVC you have just called `tegra_ivc_write_get_next_frame()`, or as a caller you are in the middle of filling a frame or something. IVC's answer to this is again "Not my problem", there is no locking.
+#### Now that I know better, fuzz better
+Check the fuzzer, no crashes... :( but now that I know a bit more about the state machine, it's time to make the fuzzer less dumb. Since I am already using LKL, and I am already inspired by Android Red Team's blog on fuzzing Binder it makes sense to continue on that path. In that blog they describe one of the interesting characteristics of LKL. LKL is a single process, in order to do task management it has to yield, no background task, no async work (in the general meaning, workqueues still work just serially against everything else), this can be a pain in the ass, or an opportunity. The clever people who wrote the blog used it as an opportunity to coerce what looked like racy conditions into being fuzzed by using the single process yielding substrate of LKL to interleave threads with an amount of control that would otherwise not be possible.
 
-Let's follow that example, find some janky looking transition points, and see if we can get a our hostile `remote` peer interleaved with our well behaved `local` in a way that might affect `local`.
-#### Potential Jank point 1, notification interleave
-State is only changed on call to `tegra_ivc_reset` or `tegra_ivc_notified` , note that `tegra_ivc_notified` is action #7. There are only two calls to IVC for a write `get_next_frame` and `advance`, so that makes it simple where to try and target a state change, right in between those two calls. Can we get one of those state changed based actions to trigger a desync between the two calls such as `tx.count == 54` -> `get_next_frame` -> `notify` ->  `notified` -> `tx.count == 0` -> `advance`, would this make `advance` work on `54` or `0`? This means it might not be a corruption that ASAN could catch since its within the given allocation. Therefore one addition was needed to the fuzzer that wasn't in the red team blog. I needed some type of oracle in the harness to show that the frame sent was the frame read. 
-#### Potential Jank point 2, state machine
-State machines are hard. While this one is tiny and the corresponding actions are trivial there are two possibilities which look plausible for affecting a peer. 
+Let's follow that example, find some janky looking transition points, and see if we can get our hostile `remote` peer interleaved with our well behaved `local` in a way that might affect `local`.
+##### Potential Jank point 1, notification interleave
+Two names that look alike and are not. 
+- `ivc->notify()` is the *outbound* doorbell
+	- action #7 in the table above, a callback the caller handed over at init, which `ivc.c` calls to poke the peer.
+- `tegra_ivc_notified()` is the *inbound* handler
+	- what `ivc.h` says the caller must run after every doorbell it receives, and the **only** place in `ivc.c` that moves the state machine. 
+State is only changed by `tegra_ivc_reset()` (`ivc.c:402`) or `tegra_ivc_notified()` (`:468`, `:508`, `:532`), and both of them also fire action #7 on the way out. There are only two calls to IVC for a write, `get_next_frame()` and `advance()`, so that makes it simple where to try and target a state change, right in between those two calls. 
+
+Can we get one of those state-changed actions to trigger a desync between the two calls, such as `tx.position == 1` -> `get_next_frame` -> `notify` -> `notified` -> `tx.position == 0` -> `advance`? Would that make `advance` work on frame 1 or frame 0? (`position` is the local frame index, not the shared `count` on the wire). This means it might not be a corruption that ASAN (AddressSanitizer) could catch since it's within the given allocation. Therefore one addition was needed to the fuzzer that wasn't in the red team blog. I needed some type of oracle in the harness to show that the frame sent was the frame read.
+##### Potential Jank point 2, state machine
+State machines are hard. While this one is tiny and the corresponding actions are trivial there are two possibilities which look plausible for affecting a peer.
 - Can we force an illegal state transition that hot loops a peer (DoS)?
-- Can we hold a hold a state that hot loops the peer (DoS)?
-This is seems plausible because there are no sleeps or waits, or anything I could see that prevents a peer from retrying a move through the state graph as fast as possible.
-## Let the fuzzer run...
-Now that the fuzzer is a little smarter and finding somethings lets build the mental model a bit more and take a look at one of the few safety checks that exist.
+- Can we hold a state that hot loops the peer (DoS)?
+This seems plausible because there are no sleeps or waits, or anything I could see that prevents a peer from retrying a move through the state graph as fast as possible.
+### Let the fuzzer run...
+Now that the fuzzer is a little smarter and running again, let's build the mental model a bit more and take a look at one of the few safety checks that exist.
 #### tegra_ivc_check_params
 ```c
 static int tegra_ivc_check_params(unsigned long rx, unsigned long tx,
@@ -217,15 +233,16 @@ static int tegra_ivc_check_params(unsigned long rx, unsigned long tx,
 	return 0;
 }
 ```
-This overlap check makes sense, we dont want `tx` and `rx` rings clobbering each other. Let's do some Desk Checking:
-if `tx == 100`, `frame_size == 5`, `num_frames == 1`, and `rx == 105`, that should have `tx` and `rx` butt right up against each other but not overlap since 5 bytes would be at addrs 100, 101, 102, 103, 104 right?
-So tx is `100 + 5 * 1 == 105` and `rx < tx` does not hold in this case so we use the bottom check. No problem, `105 (tx + frame_size * num_frames) > 105 (rx) == false` we pass the check as we should. 
+This overlap check makes sense, we don't want `tx` and `rx` rings clobbering each other. Let's do some desk checking:
 
-Can we use a zero somewhere, that always trips people up? So `tx == 100`, `frame_size == 0`, `num_frames == 1`, and `rx == 100` should be interesting because in the case we did above `rx` and `tx` were the same number and passed. Again we fall through to the bottom check because (100 < 100) does not hold. So we end up with `100 (tx + frame_size * num_frames) > 100 (rx) == false` we pass the check and we shouldn't... 
+So: if `tx == 100`, `frame_size == 5`, `num_frames == 1`, and `rx == 105`, that should have `tx` and `rx` butt right up against each other but not overlap since 5 bytes would be at addrs 100, 101, 102, 103, 104, right?
+So `tx` is `100 + 5 * 1 == 105` and `rx < tx` does not hold in this case so we use the bottom check. No problem, `105 (tx + frame_size * num_frames) > 105 (rx) == false` we pass the check as we should.
+
+Can we use a zero somewhere, that always trips people up? So `tx == 100`, `frame_size == 0`, `num_frames == 1`, and `rx == 100` should be interesting because in the case we did above `rx` and `tx` were the same number and passed. Again we fall through to the bottom check because (100 < 100) does not hold. So we end up with `100 (tx + frame_size * num_frames) > 100 (rx) == false` we pass the check and we shouldn't...
 
 Is this a bug? Yes, in the sense that it is specifically trying to check for overlap and it missed a case. However, as a caller you can by design do so much worse already. Further, in the threat model of dorking with a peer this provides nothing, it would only confuse your VM's setup and prevent comms to the peer as a caller since both your `rx` and `tx` queues are stacked on each other per below. So a correctness bug at most.
-``` 
-addr 100                                                     addr 128            addr 128 (no increase due to frame_size == 0)
+```text
+addr 100                                                     addr 228            addr 228 (no increase due to frame_size == 0)
     ┌───────────────────────────────────────────────────────────────┬──────────────────┐        
 tx  | tegra_ivc_header {count, state, <pad>} tx, {count, <pad>} rx  |     frames       |
     ├───────────────────────────────────────────────────────────────┼──────────────────┤  
@@ -233,8 +250,8 @@ rx  │ tegra_ivc_header {count, state, <pad>} tx, {count, <pad>} rx  |     fram
     └───────────────────────────────────────────────────────────────┴──────────────────┘  
 ```
 
-BUT WAIT... my diagram is wrong... I had a mental model of the tx/rx queue that I used to write the diagram for this bug which included the header. The header is not included in `check_params`?!? Really what `check_params` just did was allow this:
-``` 
+BUT WAIT... my diagram is wrong... I had a mental model of the `tx`/`rx` queue that I used to write the diagram for this bug which included the header. The header is not included in `check_params`?!? Really what `check_params` just did was allow this:
+```text
 addr 100           addr 100 (no increase due to frame_size == 0)
     ┌──────────────────┐        
 tx  |     frames       |
@@ -243,22 +260,22 @@ rx  │     frames       |
     └──────────────────┘  
 ```
 When it was trying to enforce this by code:
-``` 
+```text
 addr 100       addr 105 ( if frame_size == 5 and 1 frame)
     ┌─────────────┬────────────┐        
     |  tx frames  |  rx frames | 
     └─────────────┴────────────┘  
 ```
 But really intended to enforce this:
-``` 
+```text
 addr 100                      addr 233                       addr 366 ( hdr + frame_size 5, 1 frame)
     ┌────────────────┬─────────────┬────────────────┬────────────┐        
     | tx ivc_header  | tx frames   |  rx ivc_header | rx frames  | 
     └────────────────┴─────────────┴────────────────┴────────────┘  
 ```
-Otherwise this is just a frame overlap check, and that is problematic since frames might not overlap but maybe its possible that a `tegra_ivc_header` could overlap with frames since the header is not counted... More desk checking:
-Let's use the `frame_size == 5` and `num_frames == 1`since gives us something smaller than the header (128) give `check_params` which lets us "not overlap" with just 5 bytes, we know this passes from the first example. 
-``` 
+Otherwise this is just a frame overlap check, and that is problematic since frames might not overlap but maybe it's possible that a `tegra_ivc_header` could overlap with frames since the header is not counted... More desk checking:
+Let's use `frame_size == 5` and `num_frames == 1`, since that gives `check_params` something smaller than the header (128) and lets us "not overlap" with just 5 bytes, we know this passes from the first example. 
+```text
 addr 100,addr 105        addr 228
     ┌────────────────────────┬──────────────────┐        
 tx  | ivc_header             |     frames       |
@@ -268,12 +285,15 @@ rx        │ ivc_header           |     frames         |
     └──┬──┘
      checker says we have space for one 5B frame, no overlap, we good.
 ```
-Is this now anything more than a correctness bug? I would still classify this as a correctness bug within `ivc.c`
+Does this actually work with aligned numbers?
+- **The zero case.** `tx == 0x1000`, `rx == 0x1000`, `frame_size == 0`, `num_frames == 1`. `IS_ALIGNED(0, 64)` is *true*, so a zero frame size sails through the alignment check; both addresses are 64-aligned; `rx < tx` is false; `0x1000 + 0*1 > 0x1000` is false. Accepted, with both rings stacked on the same address.
+- **The header case.** `tx == 0x1000`, `rx == 0x1040`, `frame_size == 64`, `num_frames == 1`. Everything is aligned, `rx < tx` is false, and `0x1000 + 64*1 == 0x1040 > 0x1040` is false. No problem, and yet the `tx` header occupies `0x1000-0x107F` while the `rx` header occupies `0x1040-0x10BF`, so the second half of the `tx` ring's header is byte-for-byte the first half of the `rx` ring's. The check let two 128-byte headers overlap by 64 bytes because it never counted them.
 
-This is due to how little responsibility the IVC implementation takes. As I have said before IVC pushes the hard work mostly up to the caller, but what we care about here in order to judge whether this is a correctness or security issue depends on whether the hypervisor took up the deferred responsibility of managing the memory.  So if it is a security issue, that issue is in the hypervisor permission granularity and its a bigger problem than this. 
-## Check the fuzzer
-### What happend with janky code point 1
+Is this now anything more than a correctness bug? I would still classify this as a correctness bug within `ivc.c`.
 
+This is due to how little responsibility the IVC implementation takes. As I have said before IVC pushes the hard work mostly up to the caller or down to the hypervisor, but what we care about here in order to judge whether this is a correctness or security issue depends on whether the hypervisor took up the deferred responsibility of managing the memory. So if it is a security issue, that issue is in the hypervisor permission granularity and it's a bigger problem than this.
+### Check the fuzzer
+#### What happened with janky code point 1
 Ironically, if the in-tree caller implementation had followed the guidance in `ivc.h` there would be a real finding here:
 ```c
 /**
@@ -287,106 +307,135 @@ Ironically, if the in-tree caller implementation had followed the guidance in `i
  */
 int tegra_ivc_notified(struct tegra_ivc *ivc);
 ```
-The in-tree BPMP driver doesn't do this. Its doorbell path goes straight to `tegra_bpmp_handle_rx()`, and the only place `tegra_ivc_notified()` gets called tree-wide is the reset spin. So the interleave I went looking for can't happen in-tree, which is a property of `bpmp-tegra186.c` not of `ivc.c`. Give the harness a caller that does what the header says and the finding shows up:
+The in-tree BPMP driver (Boot and Power Management Processor), the co-processor Linux asks for clocks, resets, power and thermals doesn't do this. Its doorbell path goes straight to `tegra_bpmp_handle_rx()`, and the only place `tegra_ivc_notified()` gets called tree-wide is the reset spin. So the interleave I went looking for can't happen in-tree, which is a property of `bpmp-tegra186.c` not of `ivc.c`. Give the harness a caller that does what the header says and the finding shows up:
 
-```
+```text
 [ivc] step  8: V_WRITE_GET_FRAME  ret=0    <- caller is handed frame 1
-[ivc] step  9: V_NOTIFIED         ret=0    <- branch A zeroes tx.position, EST -> ACK
+[ivc] step  9: V_NOTIFIED         ret=0    <- branch A, the rx_state==SYNC arm (ivc.c:438), zeroes tx.position, EST -> ACK
 [ivc] step 10: V_RESET            ret=0
-    ... resets and a branch B pass put the channel back to ESTABLISHED ...
+    ... resets and one pass through the tx_state==ACK arm (ivc.c:516) put the channel back to ESTABLISHED ...
 [ivc] step 20: V_WRITE_ADVANCE            <- succeeds, on frame 0
 
 ORACLE advance acted on a different frame than get_next_frame handed out:
   victim write_advance acted on frame 0 but get_next_frame handed out frame 1
 ```
 
-That is the `tx.count == 54` -> `get_next_frame` -> `notify` -> `notified` -> `tx.count == 0` -> `advance` sequence from earlier, and the answer to "would this make advance work on 54 or 0" is **0**.
+That is the `tx.position == 1` -> `get_next_frame` -> `notify` -> `notified` -> `tx.position == 0` -> `advance` sequence from earlier, and the answer to "would this make advance work on frame 1 or frame 0" is **frame 0**.
 
 `get_next_frame` builds the caller's map from `ivc->tx.position`, and the matching `advance` re-reads that field when it runs. Nothing re-reads it into the map and nothing locks it. So the caller fills frame 1, `notified()` lands in between and zeroes the position, the peer drives the channel back to `ESTABLISHED` so the advance no longer fails `-ECONNRESET`, and the advance flushes and publishes **frame 0** (whatever stale bytes happen to be sitting there) to the peer, and the message the caller actually wrote is never sent.
 
-Every address involved is in bounds. The positions get re-based to `0`, which is a legal index for any `num_frames >= 1`, so there is nothing for KASAN to complain about. 
-#### The patch
-Not going to patch this, this is also a correctness issue not a security bug. A hostile guest could already write to whatever frame it wants, including in the middle of a read. Same with a read, if we interrupted with read get frame and read advance frame with notify sure the attacker may get to read the wrong frame by conforming, but a hostile peer doesnt have to conform it could just read whatever number of frames are there any time it wants. Further, it is latent in this tree.
+Every address involved is in bounds. The positions get re-based to `0`, which is a legal index for any `num_frames >= 1`, so there is nothing for KASAN, the kernel's AddressSanitizer, to complain about.
+##### Why I'm not patching this
+It is latent in this tree for two independent reasons: `tegra_ivc_notified()` is never called between `get` and `advance` in-tree, and `bpmp-tegra186.c:134-136` configures `num_frames = 1`, so `tx.position` is permanently `0` and there is nothing to desync.
 
-With that context in mind the problem is a desync between the get and advance. So if I were to patch this I think I would add a check flag which could be cleared in `get`, set in `reset` or `notified,` and checked in `advance` so that if there was some desync problem you reset everything do the handshake again, then try the read or write again. 
-### What happend with with janky code point 2
-Suspicion confirmed. There appears to be a DoS which can be triggered by a hostile VM. Essentially, the Attacker can reach a state where it sets it's `SYNC` state and walks away. The victim then hot loops forever. 
+Take the victim's `rx` ring, the one we transmit into. Those frames are ours. We author every byte in them, and with no locking anywhere we can rewrite one in the middle of the victim's read whenever we feel like it. So say we time a `notified()` to land between its `read_get_next_frame()` and its `read_advance` and make it consume the wrong frame, so what? We wrote all of them. And that's following some semblance of the protocol which as a compromised guest we never had to conform. i.e this didn't hand us anything we were missing.
 
-This is problematic because the context of this Tegra IVC is that you have `x` number of peers, one for each service, on a SoC with `y` number of cores. So if as the attacker you DoS more peers than there are cores  things stop working not just for the one VM but everything running on the SoC.  Concerning if this intergrates with your vehicle (DriveOS), or industrial/medical equipment (IGX Thor)
+Now the victim's `tx` ring, the one we receive from. Here we author nothing, but we can read every frame in it, whenever we like, in any order, as many times as we like, without conforming. So a desync that shuffles *which* frame we end up looking at gains us nothing either. They were all already ours to read.
+
+With that context in mind the problem is a desync between the get and advance. So if I were to patch this I think I would add a check flag which could be cleared in `get`, set in `reset` or `notified`, and checked in `advance` so that if there was some desync problem you reset everything do the handshake again, then try the read or write again.
+#### What happened with janky code point 2
+The attacker sets its state word to `SYNC` and walks away; the victim then hot loops forever.
+
+The issue here is not really a DoS of one peer service. This could be done simply by not responding as the attacker, you have "denied a service". The problem, I think, happens when this scales up. A peer is a service, not a VM. In the DRIVE OS shape that is one dirty Linux guest against roughly ten service partitions, and nothing in `ivc.c` makes wedging the tenth harder than wedging the first. So `x` services down, from one guest, is not the part I'm unsure about.
+
+What I can't close is whether `x` services down becomes the SoC down. That needs two things I haven't established: 
+- the spinning partitions share physical cores rather than being pinned to their own by the PCT
+- the hypervisor enforces no per-partition CPU budget. 
+The IGX material up top is a hint and not an answer "a Linux VM and a QNX VM on CCPLEX" puts both on the same CPU complex rather than on separate processor islands, which is the precondition for interference, but sharing a complex is not the same as sharing a core, and the PCT is free to pin them apart.
+
+Pin the partitions, budget them properly, and you have removed the spillover while leaving the per-service kill exactly where it was. A well-configured hypervisor turns a speculative SoC-wide DoS into a dependable per-service one. Better, but not a fix.
+
+How bad the spin is for the victim VM? I think its safe to infer that in the case the hypervisor has a CPU budget if `x` number of services hot looped is greater than the budget that VM is cooked. If there is no hypervisor budget and `x > #cpus` your SoC is cooked. Concerning if this integrates with your vehicle (DRIVE OS) or industrial/medical equipment (IGX Thor), but treat the SoC-wide version as a thing to go and check on hardware if you are so inclined.
 
 In more detail:
 ![DoS peer hotloop](/static/tegra_teardown/DoS_statemachine.png)
-The loop is absorbing, not slow. Nothing about the state differs between pass 1 and pass 7,651,085 (crash dump below). No path inside `tegra_ivc_notified()` can  change the victim's `rx` word, so `rx_state == SYNC` holds forever. Each pass rewrites the `ACK` already in `tx.state` (`:468`), re-zeroes both counters (`:452-453`), rings the doorbell (`:474`), and returns `-EAGAIN` (`:549-550`) because `tx_state` is not `ESTABLISHED`. 
 
-I feel resonably confident that this is a true bug and not something the hypervisor is mediating even without looking at the hypervisor itself.  The assumption I made earlier is that this IVC setup works off of 64B fully coherent cache-lines which can have permissions set. That assumption prevents me from thinking there is any way a hypervisor could mediate state transistions without breaking performance which is clearly important based on the comments:
-```
+And the same thing as a sequence, with the line numbers, because the state diagram doesn't show the part that makes it a denial of service rather than a stall: the attacker gets its state word to `SYNC` and then stops touching the ring entirely.
+
+![DoS sequence, step by step, from the fuzzer run in Note 2](/static/tegra_teardown/state_dos_seq.png)
+
+The loop is absorbing, not slow. Nothing about the state differs between pass 1 and pass 7,651,085 (full crash dump in Note 2). No path inside `tegra_ivc_notified()` can change the victim's `rx` word, so `rx_state == SYNC` holds forever. Each pass rewrites the `ACK` already in `tx.state` (`:468`), re-zeroes both counters (`:452-453`), rings the doorbell (`:474`), and returns `-EAGAIN` (`:549-550`) because `tx_state` is not `ESTABLISHED`.
+
+I feel reasonably confident that this is a true bug and not something the hypervisor is mediating even without looking at the hypervisor itself. The assumption I made earlier is that this IVC setup works off of 64B fully coherent cache-lines which can have permissions set. That assumption prevents me from thinking there is any way a hypervisor could mediate state transitions without breaking performance which is clearly important based on the comments:
+```c
 ivc.c:46-52 — "delineates ownership of the cache lines, which is critical to    
   performance and necessary in non-cache coherent implementations."
 ``` 
 
-#### So how does binder handle this issue? 
-Basiclly the way I infered that the hypervisor cant. It mediates, and it uses a copy per transaction, slow. The kernel in this case is the mediator rather than a hypervisor. It never shares memory with an untrusted peer, so the attacker method of setting a state in shared memory and walking away cant exist. 
-#### If that is too slow whats the fix?
-My first thought is that the dangerous bit of this is the DoS of the SoC, not just a DoS of a single peer channel, so a geometric backoff should work. No state change, then dont hot loop, simple right?
+##### So how does Binder handle this issue?
+Basically the way I inferred that the hypervisor can't. It mediates, and it uses a copy per transaction, slow. The kernel in this case is the mediator rather than a hypervisor. It does share memory with the untrusted peer (the per-process buffer is mmap'd into the receiving process) but `binder.c:6161` clears `VM_MAYWRITE`, so the peer can only ever read it. There is no attacker-writable control word anywhere in the mapping, so the attacker method of parking a state in shared memory and walking away doesn't exist.
+##### If that is too slow, what's the fix?
+My first thought was that the dangerous bit was the SoC-wide DoS, so a geometric backoff should work. No state change, just don't hot loop, simple right?
 
-But VMs have been around for a minute and they are not really my area so let's check what the cool kids are doing. This cant be the first time IVC problems like this have arrison. Let's take a look at how [Xen](https://xenproject.org/) handles this: 
-##### One servicer per peer                                                                                                        
-`struct xenvif` holds `struct xenvif_queue *queues`, and each queue gets two kthreads of its own, created per queue in xenvif_connect_queue():              
+But VMs have been around for a minute and they are not really my area so let's check what the cool kids are doing. This can't be the first time problems like this have arisen. Let's take a look at how [Xen](https://xenproject.org/) handles it. Specifically `xen-netback`, the *backend* driver that sits in the trusted domain and talks to an untrusted frontend over a shared ring. 
+###### One servicer per "peer"
+`struct xenvif` holds `struct xenvif_queue *queues`, and each queue gets two kthreads of its own, created per queue in `xenvif_connect_data()` (`interface.c:703`):
 ```c
 interface.c:730   kthread_run(xenvif_kthread_guest_rx, queue, ...)     
 interface.c:741   kthread_run(xenvif_dealloc_kthread, queue, ...)      
 ```
-A frontend that stalls its own kthread. Compare bpmp-tegra186.c:317-322, where one thread walks all five channels and the first to wedge blocks the rest.   
-##### The servicer blocks instead of spinning 
-`xenvif_wait_for_rx_work()` (rx.c:570-592) is a hand-rolled wait loop.
-That is the per-peer event-driven servicer, verbatim. No spinning; the thread sleeps and the conditions that matter wake it.                            
-##### Stall detection that parks and recovers
+A frontend that stalls its own kthread stalls only itself. 
+###### The servicer blocks instead of spinning
+`xenvif_wait_for_rx_work()` (`rx.c:570-593`) is a hand-rolled wait loop. It `prepare_to_wait()`s, re-checks `xenvif_have_rx_work()`, and schedule_timeout()`s. That is the per-peer event-driven servicer. No spinning, the thread sleeps and the conditions that matter wake it.
+###### Stall detection that parks and recovers
 ```c
-rx.c:520   xenvif_rx_queue_stalled() // !stalled && slots < needed  && time_after(jiffies, last_rx_time + stall_timeout)                       
-rx.c:532   xenvif_rx_queue_ready()  // stalled && slots >= needed     
+rx.c:520   xenvif_rx_queue_stalled() // !stalled && slots < needed && time_after(jiffies, last_rx_time + stall_timeout)
+rx.c:530   xenvif_rx_queue_ready()   // stalled && slots >= needed
 ```
-On stall, `xenvif_queue_carrier_off()` sets `queue->stalled = true` (interface.c:728) and drops the carrier, which discards queued packets (interface.c:795) rather than accumulating them. `xenvif_rx_queue_ready()` un-stalls when the frontend starts consuming again. Timeout from `rx_stall_timeout_msecs` (interface.c:516).           
-This is the green "park and report" edge, implemented and recoverable — and note it's a timeout, which confirms the same constraint Tegra has when considering fixes: Xen also  cannot distinguish slow (i.e. boot) from malicious without a clock, so it uses one.
-##### Per-peer resource quota, with policy outside the kernel                                                                                              
-Token-bucket shaping per queue: credit_bytes, credit_usec, credit_timeout (common.h:208-212), enforced in tx_credit_exceeded() (netback.c:810-831) and  checked before accepting each request (netback.c:954). 
-
-Xen puts this knob in the VM's configuration.
-##### A loud, fatal way to declare one peer dead
+On stall, `xenvif_queue_carrier_off()` (`rx.c:595`) sets `queue->stalled = true` (`rx.c:599`) and, if it is the first queue to stall, logs `"Guest Rx stalled"` and drops the carrier (`rx.c:603-605`) so new packets are dropped at the door rather than accumulating (`rx.c:655-657`). `xenvif_rx_queue_ready()` un-stalls when the frontend starts consuming again. The same constraint Tegra has when considering fixes: Xen also cannot distinguish slow (i.e. boot) from malicious.
+###### Per-peer resource quota, with policy outside the kernel
+Token-bucket shaping per queue: `credit_bytes`, `credit_usec`, `credit_timeout` (`common.h:208-212`), enforced in `tx_credit_exceeded()` (`netback.c:811-840`) and checked before accepting each request (`netback.c:955`).
+###### A loud, fatal way to declare one peer dead
 ```c
-  netback.c:222  static void xenvif_fatal_tx_err(struct xenvif *vif)
+netback.c:223  static void xenvif_fatal_tx_err(struct xenvif *vif)
                  netdev_err(vif->dev, "fatal error; disabling device\n");
                  vif->disabled = true;
 ```
 
-  Invoked when the frontend's ring metadata is impossible — e.g. claiming more slots than the ring holds (netback.c:252, :259). One vif dies loudly; the host is fine.
-  
-A sharp contrast with IVC. Xen's analogue of the over-full condition is a protocol violation that kills the channel and logs it. IVC's over-full check refuses reads silently, permanently, and the handshake still reports ESTABLISHED.
-##### Geometric backoff 
+Invoked when the frontend's ring metadata is impossible:
+- claiming more slots than the ring holds
+- using more than `fatal_skb_slots` 
+One virtual interface dies loudly the host is fine.
+###### Geometric backoff
 ```c
-  drivers/xen/events/events_base.c:597-644, xen_irq_lateeoi_locked():
+drivers/xen/events/events_base.c:597-646, xen_irq_lateeoi_locked()
+(per-device accounting elided):
 
-  if ((1 << info->spurious_cnt) < (HZ << 2))
-          info->spurious_cnt++;
-  if (info->spurious_cnt > threshold) {
-          delay = 1 << (info->spurious_cnt - 1 - threshold);
-          if (delay > HZ)
-                  delay = HZ;
-          info->eoi_time = get_jiffies_64() + delay;
-  }
-  ...
-  } else {
-          info->spurious_cnt = 0;      /* progress resets it */
-  }
+        if ((1 << info->spurious_cnt) < (HZ << 2)) {
+                if (info->spurious_cnt != 0xFF)
+                        info->spurious_cnt++;
+        }
+        if (info->spurious_cnt > threshold) {
+                delay = 1 << (info->spurious_cnt - 1 - threshold);
+                if (delay > HZ)
+                        delay = HZ;
+                if (!info->eoi_time)
+                        info->eoi_cpu = smp_processor_id();
+                info->eoi_time = get_jiffies_64() + delay;
+                ...
+        }
+        ...
+} else {
+        info->spurious_cnt = 0;
+}
 ```
 
-A per-event-channel count of spurious notifications, doubling the delay before re-enabling the interrupt, capped at HZ, and reset to zero the moment a notification turns out to be real. 
+A per-event-channel count of spurious notifications, doubling the delay before re-enabling the interrupt, capped at `HZ`, saturated at `0xFF` so the shift can't run away, and reset to zero the moment a notification turns out to be real.
 
-Nice! My geometric backoff idea does work for a hypervisor. They have some real defense-in-depth though.
-#### The patch
-There are a lot of open questions since I have not looked at the hypervisor(s), for this issue in particular the question is: Does the hypervisor enforce some usage limit that prevents a DoS accross the SoC? My educated guess is to say that some of them might, most likely the newer implementations (IGX Thor). However, this doesn't prevent a victim guest from hot looping with any resource its allow from the hypervisor preventing communication with any other peer. 
+Nice — my backoff idea holds up, and somebody already shipped it.
 
-The least invasive way I thought to do this is via the geometric backoff. So here is the patch:
-```c
+What Xen says is that backoff is the *floor* and not the fix. Xen has five more layers between a hostile frontend and the host: 
+- servicer per peer
+- blocking wait instead of a spin
+- stall detection on a timeout that parks and recovers
+- a per-peer quota with the policy set outside the kernel
+- and a loud fatal way to declare one peer dead
+IVC has none of them, because IVC has decided none of them are its job.
+##### The patch: geometric backoff
+There are a lot of open questions since I have not looked at the hypervisor(s), for this issue in particular the question is: Does the hypervisor enforce some usage limit that prevents a DoS across the SoC? My educated guess is to say that some of them might, most likely the newer implementations (IGX Thor). However, this doesn't prevent a victim guest from hot looping with any resource it is allowed by the hypervisor preventing communication with any other peer.
+
+The least invasive way I thought to do this is via the geometric backoff (i.e. the floor). So here is the patch:
+```diff
  void tegra_ivc_reset(struct tegra_ivc *ivc)
  {
         unsigned int offset = offsetof(struct tegra_ivc_header, tx.count);
@@ -410,32 +459,43 @@ The least invasive way I thought to do this is via the geometric backoff. So her
 
 ```
 
-Two functions are created `tegra_ivc_resync_restart` and `tegra_ivc_resync_wait`. No change in state -> start the backoff, change in state -> reset the backoff. 
+Two functions are created, `tegra_ivc_resync_restart()` and `tegra_ivc_resync_wait()`. No change in state -> start the backoff, change in state -> reset the backoff.
 
-As I started looking at how to patch this I realized there were more opportunities to hot loop. So I made the patch more generic than what I started with, originally it keyed off of only the SYNC state. 
+It cuts the doorbell rate, the shared-memory traffic and the CPU burn. It does **not** bound the loop: `tegra_ivc_notified()` still returns `-EAGAIN` for ever and the caller still retries for ever, so the channel is still dead and probe or resume still never completes. As I started looking at how to patch this I realized there were more opportunities to hot loop. So I made the patch more generic than what I started with, originally it keyed off of only the SYNC state.
 
 As a side note this patch also made fuzzing work a bit better. With the hot loop spinning at 1.5 M iterations/s the LKL thread pegged the core and the symbolizer subprocess couldn't make progress on a crash dump. With the backoff armed the loop sits in a bounded wait with `cpu_relax()`, the symbolizer gets CPU, the backtrace completes.
-# Close
+## Close
 
-It is clear that as far as IPC/IVC goes the design decisions made here about as far as you can get from Binder. This design has its pros and cons in that the actual IVC implementation attack surface is tiny, a count and a state, that's about it. This could be a deliberate call in that if you have multiple disparate OSs (e.g. Linux and QNX) the contract you need to adhere to is correspondingly tiny. 
+It is clear that as far as IPC/IVC goes the design decisions made here are about as far as you can get from Binder. This design has its pros and cons in that the actual IVC implementation attack surface is tiny, a count and a state, that's about it. This could be a deliberate call in that if you have multiple disparate OSs (e.g. Linux and QNX) the contract you need to adhere to is correspondingly tiny.
 
-However, I think that is where the good news ends. In the Android ecosystem fragmented implementations have been the bane of Android security. This is most recently exemplified by Calif's recent post [here](https://calif.io/research/oempocalypse). And it seem to be that this is the direction that Tegra IVC is moving in, as it takes responsibility for nothing and pushes responsibility mostly to the caller. This means that each use of IVC is suspect:
-- Did the caller setup the memory, frame numbers, frame size exactly correct?
+However, I think that is where the good news ends. In the Android ecosystem fragmented implementations have been the bane of Android security, most recently exemplified by [OEMpocalypse](https://calif.io/research/oempocalypse).
+
+ Each use of IVC is suspect:
+- Did the caller set up the memory, frame numbers, frame size exactly correct?
 	- for all peers?
 - Did the caller allow for any race conditions (e.g. between calls and notifications)?
 - Is a peer even using `ivc.c` or did they roll their own?
 - If using `ivc.c` which tree did it come from?
 
-This kind of fragmentation is tech-debt Google has been digging out of for years with the latest being the push for Generic Kernel Images (GKI). Binder though has not suffered such a fate, it is a single implementation not left up to the OEMs and absolutely hammered by the security community until it is one of the hardest attack surfaces on Android. 
+This kind of fragmentation is tech-debt Google has been digging out of for years with the latest being the push for Generic Kernel Images (GKI). Binder though has not suffered such a fate, it is a single implementation not left up to the OEMs and absolutely hammered by the security community until it is one of the hardest attack surfaces on Android.
 
-Maybe this is my bias talking, but I think my suggestion to Nvidia would be to follow Binder's example. They are in the same space of security critical devices, both embedded, both having to deal with untrusted vendor shenanigans. Fragmentation may buy security through obscurity, but that only works until one  implementation stack is important enough to be a target, and I don't know a company who doesn't want their tech to be important.
-# Future work
-As it stands I probably wont look much more at Tegra. If I do it is obvious that `ivc.c` is not the target, caller implementations, `ivc-cdev.c` or something else adjacent to `ivc.c` is what I would look at. Maybe the Hypervisor depending on what the agrements are to get it.
+Maybe this is my bias talking, but my suggestion to NVIDIA would be to consolidate in some way. One implementation, in the open, with a shared conformance suite, hammered by everyone until it stops giving. That is perfectly compatible with a tiny wire contract; it's the *implementations* of the stack that need to stop being plural. The five things Xen has and IVC doesn't, per-peer servicing, a blocking wait, a stall timeout, a per-peer quota, and a loud way to declare a peer dead would be a good place to start though.
 
-# Notes
-1. NVIDIA documents two steps. **I/O coherency** — *"a feature with which an I/O device such as a GPU can read the latest updates in CPU caches"* — is *"supported on Tegra devices starting with Xavier SOC"*, and is one-way. **Sysmem Full Coherency** — *"an extension to I/O coherency where additionally the CPU can also read the latest updates in the GPU's cache"* — is *"supported on Tegra devices starting with Thor SoC"* and *"removes the need to perform both CPU and GPU cache management operations when the same physical memory is shared between CPU and GPU, and cached on both"* ([CUDA for Tegra, *I/O Coherency*](https://docs.nvidia.com/cuda/cuda-for-tegra-appnote/index.html#i-o-coherency)). Separately, the programming guide splits platforms by page table: hardware-coherent ones *"offer a logically combined page table for both CPUs and GPUs"* and are *"coherent at cache-line granularity instead of page-size granularity"*, against software-coherent ones with separate tables ([Unified Memory, *CPU and GPU page tables*](https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/unified-memory.html#cpu-and-gpu-page-tables-hardware-coherency-vs-software-coherency)). The docs establish *coherency* at cache-line granularity on a Thor-class part. It says nothing about *permission* at that granularity: **neither document mentions access permissions, protection granularity, hypervisor page tables or the SMMU at all**. Coherency decides which agent observes whose writes; permission decides which agent may write. A part can be fully coherent at 64 B and still enforce access control only at 4 KiB: the permission granule is a property of the MMU, not of the coherence fabric. So the 64-byte-permission premise is **assumed** for this post.
-2. ```
-   [ivc] step 0: V_NOTIFIED(0,0,0,0) ret=0 flags=0x0
+Fragmentation may buy security through obscurity, but that only works until one implementation stack is important enough to be a target, and I don't know a company that doesn't want their tech to be important.
+## Future work
+As it stands I probably won't look much more at Tegra. If I do it is obvious that `ivc.c` is not the target, caller implementations, `ivc-cdev.c` or something else adjacent to `ivc.c` is what I would look at. Maybe the hypervisor depending on what the agreements are to get it.
+
+## Notes
+### Note 1 — coherency is not permission
+
+NVIDIA documents two steps. **I/O coherency** — *"a feature with which an I/O device such as a GPU can read the latest updates in CPU caches"* — is *"supported on Tegra devices starting with Xavier SOC"*, and is one-way. **Sysmem Full Coherency** — *"an extension to I/O coherency where additionally the CPU can also read the latest updates in the GPU's cache"* — is *"supported on Tegra devices starting with Thor SoC"* and *"removes the need to perform both CPU and GPU cache management operations when the same physical memory is shared between CPU and GPU, and cached on both"* ([CUDA for Tegra, *I/O Coherency*](https://docs.nvidia.com/cuda/cuda-for-tegra-appnote/index.html#i-o-coherency)). Separately, the programming guide splits platforms by page table: hardware-coherent ones *"offer a logically combined page table for both CPUs and GPUs"* and are *"coherent at cache-line granularity instead of page-size granularity"*, against software-coherent ones with separate tables ([Unified Memory, *CPU and GPU page tables*](https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/unified-memory.html#cpu-and-gpu-page-tables-hardware-coherency-vs-software-coherency)). The docs establish *coherency* at cache-line granularity on a Thor-class part. It says nothing about *permission* at that granularity: **neither document mentions access permissions, protection granularity, hypervisor page tables or the SMMU (the system-wide memory management unit, or MMU) at all**. Coherency decides which agent observes whose writes; permission decides which agent may write. A part can be fully coherent at 64 B and still enforce access control only at 4 KiB: the permission granule is a property of the MMU, not of the coherence fabric. So the 64-byte-permission premise is **assumed** for this post.
+
+### Note 2 — the full fuzzer run
+
+Full fuzzer output for the `SYNC` hot-loop DoS. Absolute paths and build IDs redacted; everything else is verbatim.
+
+```text
+[ivc] step 0: V_NOTIFIED(0,0,0,0) ret=0 flags=0x0
 [ivc] step 1: SET_STATE(0,3,3907815483,0) ret=0 flags=0x0
 [ivc] step 2: V_WRITE_ADVANCE(0,0,0,0) ret=0 flags=0x0
 [ivc] step 3: V_WRITE_ADVANCE(0,0,0,0) ret=0 flags=0x0
@@ -447,11 +507,11 @@ As it stands I probably wont look much more at Tegra. If I do it is obvious that
 [    5.315939] Kernel panic - not syncing: fuzz_ivc: NOTIFY_LOOP did not terminate: victim spun 7651085 times in 5000000633 ns from node (v=2,a=1) — tegra_ivc_notified() returns -EAGAIN for ever and bpmp-tegra186.c:155-156 never exits
 [    5.316010] ---[ end Kernel panic - not syncing: fuzz_ivc: NOTIFY_LOOP did not terminate: victim spun 7651085 times in 5000000633 ns from node (v=2,a=1) — tegra_ivc_notified() returns -EAGAIN for ever and bpmp-tegra186.c:155-156 never exits ]---
 lkl_libf_ivc: lib/posix-host.c:451: void panic(void): Assertion `0' failed.
-==1320583== ERROR: libFuzzer: deadly signal
-    #0 0x467548 in __sanitizer_print_stack_trace (/mnt/ramdisk/ivc_h3_fuzzer/lkl_libf_ivc+0x467548) (BuildId: a4c1c3dea26e5973093d200e0e70fd96b842e13b)
-    #1 0x43dbdc in fuzzer::PrintStackTrace() (/mnt/ramdisk/ivc_h3_fuzzer/lkl_libf_ivc+0x43dbdc) (BuildId: a4c1c3dea26e5973093d200e0e70fd96b842e13b)
+==PID== ERROR: libFuzzer: deadly signal
+    #0 0x467548 in __sanitizer_print_stack_trace (<build>/lkl_libf_ivc+0x467548)
+    #1 0x43dbdc in fuzzer::PrintStackTrace() (<build>/lkl_libf_ivc+0x43dbdc)
     #2 0x4236aa in __covrec_810869138693A016 xarray.c
-    #3 0x78f910c45caf  (/usr/lib/x86_64-linux-gnu/libc.so.6+0x45caf) (BuildId: 066527e430a32768d82741e00b81eebb1a872294)
+    #3 0x78f910c45caf  (/usr/lib/x86_64-linux-gnu/libc.so.6+0x45caf)
     #4 0x78f910ca61ab in __pthread_kill_implementation nptl/pthread_kill.c:43:17
     #5 0x78f910ca61ab in __pthread_kill_internal nptl/pthread_kill.c:89:10
     #6 0x78f910ca61ab in pthread_kill nptl/pthread_kill.c:100:10
@@ -460,29 +520,27 @@ lkl_libf_ivc: lib/posix-host.c:451: void panic(void): Assertion `0' failed.
     #9 0x78f910c29978 in __libc_message_impl libio/../sysdeps/posix/libc_fatal.c:138:3
     #10 0x78f910c3bf74 in __libc_message_wrapper assert/../include/stdio.h:203:3
     #11 0x78f910c3bf74 in __assert_fail assert/assert.c:37:3
-    #12 0x46ffaf in __covrec_64B97C43602C787A /home/dev/repos/lkl_linux/tools/lkl/lib/posix-host.c:451:2
-    #13 0x4bd946 in __covrec_CDEACDC7C57EEC97 /home/dev/repos/lkl_linux/arch/lkl/kernel/setup.c:29:2
-    #14 0x1b9e2d6 in __covrec_979C81FDA6829769 /home/dev/repos/lkl_linux/kernel/panic.c:474:9
-    #15 0x14e8f75 in h3_do_notify_loop /home/dev/repos/lkl_linux/drivers/firmware/tegra/fuzz_ivc.c:1209:4
-    #16 0x14e8f75 in h3_run_step /home/dev/repos/lkl_linux/drivers/firmware/tegra/fuzz_ivc.c:1666:9
-    #17 0x14e8f75 in h3_ioctl_step /home/dev/repos/lkl_linux/drivers/firmware/tegra/fuzz_ivc.c:2750:8
-    #18 0x14e8f75 in __covrec_225BA13D825218E1u /home/dev/repos/lkl_linux/drivers/firmware/tegra/fuzz_ivc.c:2850:10
-    #19 0x759419 in vfs_ioctl /home/dev/repos/lkl_linux/fs/ioctl.c:51:10
-    #20 0x759419 in __do_sys_ioctl /home/dev/repos/lkl_linux/fs/ioctl.c:907:11
-    #21 0x759419 in __covrec_1B6E8FFA1BE381E2 /home/dev/repos/lkl_linux/fs/ioctl.c:893:1
-    #22 0x4c0f31 in run_syscall /home/dev/repos/lkl_linux/arch/lkl/kernel/syscalls.c:46:8
-    #23 0x4c0f31 in __covrec_DB78CF01CB8EDE62 /home/dev/repos/lkl_linux/arch/lkl/kernel/syscalls.c:127:8
-    #24 0x468de1 in lkl_sys_ioctl /home/dev/repos/lkl_linux/./tools/lkl/include/lkl/asm/syscall_defs.h:518:1
-    #25 0x468de1 in __covrec_E8110637874ACB83 /home/dev/repos/lkl_linux/tools/lkl/tests/fuzzing/libfuzzer/ivc/lkl_ivc_ioctl.c:139:9
-    #26 0x4685c3 in __covrec_F89A7E0200F9376 /home/dev/repos/lkl_linux/tools/lkl/tests/fuzzing/libfuzzer/ivc/lkl_ivc_harness.c:217:7
-    #27 0x4678d8 in __covrec_8C75E7CDB6CD3B0 /home/dev/repos/lkl_linux/tools/lkl/tests/fuzzing/libfuzzer/ivc/lkl_ivc_main.c:328:2
+    #12 0x46ffaf in __covrec_64B97C43602C787A <lkl>/tools/lkl/lib/posix-host.c:451:2
+    #13 0x4bd946 in __covrec_CDEACDC7C57EEC97 <lkl>/arch/lkl/kernel/setup.c:29:2
+    #14 0x1b9e2d6 in __covrec_979C81FDA6829769 <lkl>/kernel/panic.c:474:9
+    #15 0x14e8f75 in h3_do_notify_loop <lkl>/drivers/firmware/tegra/fuzz_ivc.c:1209:4
+    #16 0x14e8f75 in h3_run_step <lkl>/drivers/firmware/tegra/fuzz_ivc.c:1666:9
+    #17 0x14e8f75 in h3_ioctl_step <lkl>/drivers/firmware/tegra/fuzz_ivc.c:2750:8
+    #18 0x14e8f75 in __covrec_225BA13D825218E1u <lkl>/drivers/firmware/tegra/fuzz_ivc.c:2850:10
+    #19 0x759419 in vfs_ioctl <lkl>/fs/ioctl.c:51:10
+    #20 0x759419 in __do_sys_ioctl <lkl>/fs/ioctl.c:907:11
+    #21 0x759419 in __covrec_1B6E8FFA1BE381E2 <lkl>/fs/ioctl.c:893:1
+    #22 0x4c0f31 in run_syscall <lkl>/arch/lkl/kernel/syscalls.c:46:8
+    #23 0x4c0f31 in __covrec_DB78CF01CB8EDE62 <lkl>/arch/lkl/kernel/syscalls.c:127:8
+    #24 0x468de1 in lkl_sys_ioctl <lkl>/./tools/lkl/include/lkl/asm/syscall_defs.h:518:1
+    #25 0x468de1 in __covrec_E8110637874ACB83 <lkl>/tools/lkl/tests/fuzzing/libfuzzer/ivc/lkl_ivc_ioctl.c:139:9
+    #26 0x4685c3 in __covrec_F89A7E0200F9376 <lkl>/tools/lkl/tests/fuzzing/libfuzzer/ivc/lkl_ivc_harness.c:217:7
+    #27 0x4678d8 in __covrec_8C75E7CDB6CD3B0 <lkl>/tools/lkl/tests/fuzzing/libfuzzer/ivc/lkl_ivc_main.c:328:2
     #28 0x424bb9 in __covrec_496D1264D4010148 xarray.c
     #29 0x40da64 in __covrec_AC0ED1F2A2A684CC xarray.c
-    #30 0x413887  (/mnt/ramdisk/ivc_h3_fuzzer/lkl_libf_ivc+0x413887) (BuildId: a4c1c3dea26e5973093d200e0e70fd96b842e13b)
-    #31 0x43e536 in main (/mnt/ramdisk/ivc_h3_fuzzer/lkl_libf_ivc+0x43e536) (BuildId: a4c1c3dea26e5973093d200e0e70fd96b842e13b)
+    #30 0x413887  (<build>/lkl_libf_ivc+0x413887)
+    #31 0x43e536 in main (<build>/lkl_libf_ivc+0x43e536)
     #32 0x78f910c2a600 in __libc_start_call_main csu/../sysdeps/nptl/libc_start_call_main.h:59:16
     #33 0x78f910c2a717 in __libc_start_main csu/../csu/libc-start.c:360:3
     #34 0x408004 in __covrec_FDAFC01825E84114 xarray.c
-
-   ```
-3. 
+```

@@ -58,6 +58,12 @@ main { padding: 2rem 0 3rem; }
 h1 { font-size: 1.7rem; line-height: 1.25; margin: 0 0 .5rem; }
 h2 { font-size: 1.25rem; margin: 2.25rem 0 .5rem; }
 h3 { font-size: 1.05rem; margin: 1.75rem 0 .4rem; }
+/* Browser defaults give h4-h6 almost no weight and no breathing room, so they
+   disappear into the paragraphs under them. Posts that nest four or five deep
+   need weight and margin to carry the level, since there is no size left. */
+h4 { font-size: 1rem;   font-weight: 600; margin: 1.5rem 0 .35rem; }
+h5 { font-size: .95rem; font-weight: 600; margin: 1.25rem 0 .3rem; }
+h6 { font-size: .9rem;  font-weight: 600; margin: 1.1rem 0 .3rem; color: var(--muted); }
 
 .meta, .excerpt, .fine { color: var(--muted); font-size: .875rem; }
 .meta { margin: 0 0 2rem; }
