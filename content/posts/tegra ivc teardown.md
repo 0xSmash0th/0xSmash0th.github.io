@@ -11,7 +11,7 @@ toc = true
 Short answer to the question is Tegra's IVC (Inter-VM Communication) plagued with the same issues as Binder? In a word, no. 
 - **No memory corruption on the interesting "hostile peer" surface.** Everything Binder does for you inside the kernel (framing, length, type, sender identity) IVC delegates to a different layer.
 - **Coming from Binder, the first thing you notice is everything that isn't there.** No device node, no ioctl, no uapi header. Three `u32`s on the wire, and no length, type, identity or sequence field among them. Zero allocations, zero loops and zero locks in the whole file.
-- **The DoS: park on `SYNC` and walk away.** The peer parks its state word on `SYNC` and stops touching the ring; the victim's `tegra_ivc_notified()` returns `-EAGAIN` forever (7,651,085 passes in 5 s in my harness) and the caller's retry loop never exits. In mainline that caller is `bpmp-tegra186.c:155-156`. I wrote a geometric-backoff patch which reduces the cost but does not bound the loop.
+- **The DoS: park on `SYNC` and walk away.** The peer parks its state word on `SYNC` and stops touching the ring; the victim's `tegra_ivc_notified()` returns `-EAGAIN` forever (7,651,085 passes in 5 s in my harness) and the caller's retry loop never exits. The one in-tree caller, `bpmp-tegra186.c:155-156`, has exactly that loop. I wrote a geometric-backoff patch which reduces the cost but does not bound the loop.
 - **The classic shared-ring bug isn't present, and not by accident.** The `remote` end supplies counter, state word and message bytes, but never a index used to compute an address. That holds even against a `remote` writing every byte of both shared regions to pivot out. Good job killing the Type, Length, Value (TLV) that causes so much trouble!
 ## Tegra IVC 101
 ### Why look at it?
@@ -22,7 +22,7 @@ Someone told me about this new AI thing so I thought I would poke around in AI a
 I have no Tegra hardware, no hypervisor, etc. Just some code and a bit of time. So this is testing the water to determine if I wanted to invest more time/money to do more serious work on NVIDIA.
 ### What is it?
 
-Tegra IVC is a lock-free single-producer/single-consumer ring in a block of memory two processors both map.[1](#bibliography) I will be using the terms `local/victim` and `remote/attacker` in this breakdown. Think of `local` as a vetted service, which need not be Linux, but does need to comply with the IVC protocol. Think of `remote` as the untrusted guest, running Linux of some flavor.
+Tegra IVC is a lock-free single-producer/single-consumer ring in a block of memory two processors both map.[1](#bibliography) I will be using `local` for the victim end and `remote` for the attacker end; the [threat model](#threat-model) below pins down what each one is.
 
 Concretely: `remote` writes a message into slot N of a fixed array, then bumps a counter. `local` watches the counter move, reads slot N, and bumps a counter of its own. That's the whole mechanism, two free-running counters and an array of fixed-size slots, one such array per direction, `remote` -> `local`, `local` -> `remote`. The code terms this relationship a `peer`. A peer is a *service* on the other end of one channel, not a VM. One guest can sit behind many services, and one guest can hold many peer relationships at once. DRIVE OS picture below is exactly that shape, a single Linux guest with a channel to each of about ten service partitions. So the number of peers is not the number of guests. For the purpose of understanding we will focus on a single peer relationship.
 ### What uses it?
@@ -36,13 +36,27 @@ The shape that actually ships today, a dirty Linux guest full of who-knows-what 
 ![DRIVE OS block diagram](/static/tegra_teardown/archi_foundation_image3.png)
 
 A few things fall out of that picture.
-- **The `local` end is a service partition, and it isn't Linux.** The far side of every IVC line is an HVRTOS binary. [2](#bibliography) [3](#bibliography) That's the concrete version of the "need not be Linux, does need to comply with the protocol" definition above.
+- **The `local` end is a service partition, and it isn't Linux.** The far side of every IVC line is an HVRTOS binary. [2](#bibliography) [3](#bibliography) That's the concrete version of the victim in the threat model below: not Linux, but speaking the same protocol.
 - I am reading "Guest Operating System" as meaning it could be QNX or Linux.
 - I am inferring that SoC (system-on-chip) resource calls go to the hypervisor through a standard hypercall implementation and not IVC.
 #### IGX Thor — a Linux VM beside a QNX safety VM
 The other one, NVIDIA's IGX gives two architectures for Thor, the second being "NV Hypervisor, supporting a Linux VM and a QNX VM on CCPLEX."[4](#bibliography) CCPLEX is the CPU complex (Arm application cores) so that sentence is putting both guests on the same cluster rather than on separate processor islands.
 
 ![IGX Thor stack](/static/tegra_teardown/full-stack-platform-for-enterprise-edge-ai.jpg)
+
+### Threat model
+
+What I'm attacking is `ivc.c` itself: the protocol implementation, independent of any particular caller.
+
+- **The victim (`local`)** is an endpoint running `ivc.c` the way its header says to: `tegra_ivc_notified()` after every doorbell, `get_next_frame()` followed by `advance()`. I'm assuming a well-behaved caller on purpose. A caller that breaks the contract is a caller bug, not a protocol bug.
+- **The attacker (`remote`)** is the other endpoint of the same channel, e.g. a compromised Linux guest talking to a service it's legitimately connected to. It is not a third party reaching into some other guest's channel; that would take a hypervisor mapping the wrong memory, which is a different, and much worse, bug.
+- **What the attacker controls:** whatever it can write in the channel's shared memory, at any time, in any order. It doesn't have to follow the protocol, run `ivc.c`, or be honest about its state. How much of the shared memory that covers comes down to the hypervisor's permission granularity, which I get to below.
+- **What counts as a finding:** the victim corrupting memory, publishing or consuming a different frame than the one its caller asked for, or getting stuck in a state it can't leave. Anything that turns "the peer misbehaved" into "the victim misbehaved."
+- **Out of scope:** frame contents (parsing them is the caller's job, more on that below), the hypervisor itself, and NVIDIA's out-of-tree `ivc-cdev.c` userspace interface.
+
+The protocol is symmetric, both ends run the same state table, so nothing here depends on which end is Linux. That's what makes it relevant to something like DRIVE OS, where the attacker is the Linux guest and the victim is a service partition that isn't Linux at all. The caveat: I haven't seen the service partitions' implementation. If they run `ivc.c` or a port of it, the results carry over. If they rolled their own, that's its own audit.
+
+Where `bpmp-tegra186.c` comes up, it's one real caller to compare against: does a shipping caller follow the header's guidance, and is a given finding reachable through it? It isn't the attack path. In that driver Linux's peer is BPMP firmware, which already controls Linux's clocks, resets and power, so BPMP misbehaving toward Linux doesn't cross any boundary that matters here.
 
 ## Tegra IVC from the lens of Binder
 
@@ -92,7 +106,7 @@ static const struct file_operations ivc_fops = {
 ## Let's Audit Some Code!
 Now that we know the shape of the Tegra IVC surface what are we looking for? Well, the killer bug would be if we could manipulate a peer somehow. Could we get some memory corruption on the "safe" `local` guest via IVC from a hostile `remote` peer? The surface is tiny, some counters and state, so let's start looking for an illegal state transition and see where that leads us.
 
-Of course this points squarely at the shared memory as the attack surface. A hostile guest is bound only by the permissions of the hypervisor, there is no need to conform to IVC in the sense of honoring its protocol.
+Of course this points squarely at the shared memory as the attack surface.
 ### The Shared Memory
 Two rings, one for `tx`, one for `rx`. Each has a 128B header which is padded out for cache coherency, in fact most of it is padding. You will also have some number of frames of some size determined by the caller following the header.
 
