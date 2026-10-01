@@ -28,14 +28,20 @@ strings you are trying to keep out of the repo, so it can never be committed.
 ## Daily use
 
 ```sh
-hugo new content posts/some-slug.md   # drafts start with draft = true
+hugo new content --contentDir drafts some-slug.md   # start a post in drafts/
 hugo server -D                        # preview, drafts included
 bin/preflight.py                      # scan staged changes
 bin/preflight.py --all                # scan everything tracked
 bin/scrub-image.sh static/img/*.png   # strip metadata before committing images
 ```
 
-Publishing is `draft = false` plus a commit; Pages builds on push.
+Work in progress lives in `drafts/`, outside `content/`, so Hugo never reads
+it and nothing there can render, with or without `-D`. Note that "not
+rendered" is not "private": once the repo is pushed, `drafts/` is public on
+GitHub like everything else tracked.
+
+Publishing is moving the post from `drafts/` to `content/posts/`, setting
+`draft = false`, and a commit; Pages builds on push.
 
 ## Deploy
 

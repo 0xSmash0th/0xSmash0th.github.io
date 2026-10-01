@@ -1,7 +1,7 @@
 +++
 title = 'Tegra IVC Teardown'
 date = 2026-09-02T00:00:00Z
-draft = true
+draft = false
 description = "Is Tegra's Inter VM communication plagued with the same issues as Binder was?"
 tags = ['kernel', 'linux', 'threat-modeling', 'audit', 'arm']
 toc = true
@@ -97,6 +97,7 @@ Of course this points squarely at the shared memory as the attack surface. A hos
 Two rings, one for `tx`, one for `rx`. Each has a 128B header which is padded out for cache coherency, in fact most of it is padding. You will also have some number of frames of some size determined by the caller following the header.
 
 Here is that header from both sides/rings. Note the two memory granule sizes in play, because as an attacker which one is in use could be *cough* pivotal *cough* (I am sorry, I will see myself out...).
+
 ![Possible mem layouts](/static/tegra_teardown/mem_params.png)
 #### Thoughts on hypervisor permissions for the shared memory
 I was not going to RE the hypervisor. So I had to make some assumptions about what the permissions of the given memory were. The problem here is that I don't know any implementation that has permissions granular enough to handle what this IVC implementation does. Essentially this implementation would need 64B granularity. That is because there is a 128B header where the `tx` side needs to write to the first half and the `rx` side needs to write to the second half (how that works we will cover below). If the hypervisor does not support this and only supports the page level permissions I am used to it could be a big problem depending on the IVC Caller implementation as page level permissions allow a hostile peer to at the very least read and/or write both rings' header values, and most likely some or all of the frame data.
@@ -348,6 +349,7 @@ Pin the partitions, budget them properly, and you have removed the spillover whi
 How bad the spin is for the victim VM? I think its safe to infer that in the case the hypervisor has a CPU budget if `x` number of services hot looped is greater than the budget that VM is cooked. If there is no hypervisor budget and `x > #cpus` your SoC is cooked. Concerning if this integrates with your vehicle (DRIVE OS) or industrial/medical equipment (IGX Thor), but treat the SoC-wide version as a thing to go and check on hardware if you are so inclined.
 
 In more detail:
+
 ![DoS peer hotloop](/static/tegra_teardown/DoS_statemachine.png)
 
 And the same thing as a sequence, with the line numbers, because the state diagram doesn't show the part that makes it a denial of service rather than a stall: the attacker gets its state word to `SYNC` and then stops touching the ring entirely.

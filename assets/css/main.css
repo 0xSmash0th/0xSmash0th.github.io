@@ -21,6 +21,10 @@
   }
 }
 
+/* Layout. --measure is the text column, --wide is how far images and tables
+   may run past it, --gutter is the page's side padding. */
+:root { --measure: 50rem; --wide: 64rem; --gutter: 1.25rem; }
+
 *, *::before, *::after { box-sizing: border-box; }
 
 body {
@@ -29,10 +33,10 @@ body {
   color: var(--fg);
   font: 16px/1.65 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
         "Helvetica Neue", Arial, sans-serif;
-  padding: 0 1.25rem;
+  padding: 0 var(--gutter);
 }
 
-.site-header, main, .site-footer { max-width: 42rem; margin: 0 auto; }
+.site-header, main, .site-footer { max-width: var(--measure); margin: 0 auto; }
 
 .site-header {
   display: flex;
@@ -113,8 +117,25 @@ blockquote {
 
 img, video { max-width: 100%; height: auto; }
 
-table { border-collapse: collapse; width: 100%; font-size: .9rem; display: block; overflow-x: auto; }
+/* .wide is the wrapper the image and table render hooks emit. Its width is
+   fixed, so the negative left margin that centres it on the text column can be
+   computed exactly; centring with a transform instead would put text on half
+   pixels and blur it. On a narrow screen the width falls back to the column
+   and the margin to zero. */
+.wide {
+  --w: min(var(--wide), 100vw - 2 * var(--gutter));
+  width: var(--w);
+  margin: 1.5rem 0 1.5rem calc(50% - var(--w) / 2);
+  overflow-x: auto;     /* a table wider still scrolls in the block, never the page */
+}
+.wide img { display: block; margin: 0 auto; }
+
+/* At least as wide as the text column, so a small table lines up with the
+   text; a bigger one grows into the .wide block. */
+table { border-collapse: collapse; font-size: .9rem; margin: 0 auto; min-width: min(var(--measure), 100%); }
 th, td { border-bottom: 1px solid var(--rule); padding: .4rem .6rem; text-align: left; }
+.align-center { text-align: center; }
+.align-right  { text-align: right; }
 
 .site-footer {
   border-top: 1px solid var(--rule);

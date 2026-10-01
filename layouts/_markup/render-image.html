@@ -1,9 +1,16 @@
 {{- /* Obsidian resolves image paths from the vault root, so notes reference
        /static/foo.png. Hugo publishes the *contents* of static/ at the site
        root, where that path does not exist. Strip the prefix at render time so
-       one path works in both tools and the markdown stays Obsidian-native. */ -}}
+       one path works in both tools and the markdown stays Obsidian-native.
+
+       An image on its own line (IsBlock) gets the .wide wrapper so it can run
+       wider than the text column; an image inside a paragraph stays inline. */ -}}
 {{- $dest := .Destination -}}
 {{- if hasPrefix $dest "/static/" -}}
   {{- $dest = strings.TrimPrefix "/static" $dest -}}
 {{- end -}}
+{{- if .IsBlock -}}
+<div class="wide"><img src="{{ $dest | safeURL }}" alt="{{ .Text }}"{{ with .Title }} title="{{ . }}"{{ end }}></div>
+{{- else -}}
 <img src="{{ $dest | safeURL }}" alt="{{ .Text }}"{{ with .Title }} title="{{ . }}"{{ end }}>
+{{- end -}}

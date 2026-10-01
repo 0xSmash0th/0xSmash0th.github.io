@@ -70,6 +70,10 @@ enableGitInfo = false
     # Keep false. Raw HTML in Markdown is how a stray tracking pixel or an
     # embedded iframe ends up on the site without passing any review.
     unsafe = false
+  [markup.goldmark.parser]
+    # A standalone image renders without a wrapping <p>, so the image render
+    # hook can put it in a block that is allowed to run wider than the text.
+    wrapStandAloneImageWithinParagraph = false
   [markup.tableOfContents]
     startLevel = 2
     endLevel   = 3
