@@ -101,6 +101,15 @@ IMG_SAFE = re.compile(
 OWN_ADDRESSES = set()
 
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".tif", ".tiff", ".heic", ".avif", ".pdf", ".svg"}
+VIDEO_EXT = {".mp4", ".m4v", ".mov", ".webm", ".mkv"}
+# Free-text tags muxers and editors write into a video container. Manim and
+# FFmpeg put versioned toolchain strings in Encoder/Comment; editors put names,
+# paths and places in the rest. animations/render.py strips all of them.
+VIDEO_BLOCK = re.compile(
+    r"^(Encoder|Comment|Title|Description|Artist|Author|Copyright|Software|"
+    r"Make|Model|Location\w*|GPS\w*|Keywords|Album|Genre)$",
+    re.I,
+)
 SKIP_EXT = {".woff", ".woff2", ".zip", ".gz", ".tar", ".bin", ".ico"}
 
 
@@ -270,6 +279,42 @@ def scan_image(path, findings):
             findings.append(("WARN", rel, 0, f"unexpected image metadata {tag} = {str(val)[:60]!r}"))
 
 
+def scan_video(path, findings):
+    """Container metadata, not frames: a screen recording still needs looking at."""
+    rel = os.path.relpath(path, ROOT) if os.path.isabs(path) else path
+    exif = subprocess.run(
+        ["exiftool", "-j", "-G1", "-All", "--System:All", os.path.join(ROOT, rel)],
+        capture_output=True, text=True,
+    )
+    if exif.returncode != 0 or not exif.stdout.strip():
+        findings.append(("WARN", rel, 0,
+                         "exiftool unavailable or failed — video metadata NOT checked"))
+        return
+    try:
+        tags = json.loads(exif.stdout)[0]
+    except (ValueError, IndexError):
+        findings.append(("WARN", rel, 0, "could not parse exiftool output"))
+        return
+    for tag, val in tags.items():
+        if tag == "SourceFile" or tag.startswith(("ExifTool:", "Composite:")):
+            continue
+        group, _, bare = tag.partition(":")
+        sval = str(val)
+        if IMG_BLOCK.search(bare) or VIDEO_BLOCK.match(bare):
+            findings.append(("BLOCK", rel, 0,
+                             f"video metadata {tag} = {sval[:60]!r} — re-render through animations/render.py"))
+        elif bare in ("MuxingApp", "WritingApp") and sval != "Lavf":
+            # FFmpeg writes a bare "Lavf" when told to be bitexact, and its
+            # version otherwise; anything else names a different toolchain.
+            findings.append(("WARN", rel, 0, f"versioned muxer string {tag} = {sval[:60]!r}"))
+        elif bare.endswith("Date") and sval.strip("0: ") != "":
+            # Muxers write zeroes; a real timestamp narrows down when, and in
+            # which timezone, the file was made.
+            findings.append(("WARN", rel, 0, f"timestamp in video metadata {tag} = {sval[:60]!r}"))
+        elif group in ("ItemList", "UserData", "Keys") or group.startswith("XMP"):
+            findings.append(("WARN", rel, 0, f"unexpected video metadata {tag} = {sval[:60]!r}"))
+
+
 def main():
     global OWN_ADDRESSES
     OWN_ADDRESSES = own_addresses()
@@ -288,6 +333,9 @@ def main():
         ext = os.path.splitext(f)[1].lower()
         if f.startswith("public/"):
             findings.append(("BLOCK", f, 0, "build output staged — public/ belongs in .gitignore"))
+            continue
+        if ext in VIDEO_EXT:
+            scan_video(f, findings)
             continue
         if ext in IMAGE_EXT:
             scan_image(f, findings)

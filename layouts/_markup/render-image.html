@@ -4,12 +4,39 @@
        one path works in both tools and the markdown stays Obsidian-native.
 
        An image on its own line (IsBlock) gets the .wide wrapper so it can run
-       wider than the text column; an image inside a paragraph stays inline. */ -}}
+       wider than the text column; an image inside a paragraph stays inline.
+
+       A .mp4 or .webm destination renders as a <video> instead, since raw HTML
+       is off. animations/render.py writes a .webm and a .png poster beside
+       each .mp4; whichever of them exists is picked up here. No autoplay: the
+       poster is the finished diagram, and the reader chooses to watch it move.
+       The meta CSP needs no change, media-src falls back to default-src 'self'. */ -}}
 {{- $dest := .Destination -}}
 {{- if hasPrefix $dest "/static/" -}}
   {{- $dest = strings.TrimPrefix "/static" $dest -}}
 {{- end -}}
-{{- if .IsBlock -}}
+{{- $ext := path.Ext $dest | lower -}}
+{{- if in (slice ".mp4" ".webm") $ext -}}
+  {{- $base := strings.TrimSuffix $ext $dest -}}
+  {{- $webm := "" -}}
+  {{- if and (eq $ext ".mp4") (os.FileExists (printf "static%s.webm" $base)) -}}
+    {{- $webm = printf "%s.webm" $base -}}
+  {{- end -}}
+  {{- $poster := "" -}}
+  {{- if os.FileExists (printf "static%s.png" $base) -}}
+    {{- $poster = printf "%s.png" $base -}}
+  {{- end -}}
+  {{- if .IsBlock }}<div class="wide">{{ end -}}
+  <video controls muted loop playsinline preload="metadata"{{ with $poster }} poster="{{ . | safeURL }}"{{ end }} aria-label="{{ .Text }}"{{ with .Title }} title="{{ . }}"{{ end }}>
+    {{- /* The browser plays the first source it can. H.264 MP4 comes out
+           smaller than VP9 WebM from Manim, so it goes first and the WebM is
+           the fallback for browsers built without an H.264 decoder. */ -}}
+    <source src="{{ $dest | safeURL }}" type="video/{{ strings.TrimPrefix "." $ext }}">
+    {{- with $webm }}<source src="{{ . | safeURL }}" type="video/webm">{{ end -}}
+    <a href="{{ $dest | safeURL }}">{{ .Text }}</a>
+  </video>
+  {{- if .IsBlock }}</div>{{ end -}}
+{{- else if .IsBlock -}}
 <div class="wide"><img src="{{ $dest | safeURL }}" alt="{{ .Text }}"{{ with .Title }} title="{{ . }}"{{ end }}></div>
 {{- else -}}
 <img src="{{ $dest | safeURL }}" alt="{{ .Text }}"{{ with .Title }} title="{{ . }}"{{ end }}>

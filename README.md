@@ -40,6 +40,17 @@ it and nothing there can render, with or without `-D`. Note that "not
 rendered" is not "private": once the repo is pushed, `drafts/` is public on
 GitHub like everything else tracked.
 
+Animations are Manim Community scenes in `animations/`, rendered with the
+Manim virtualenv into `static/` as a metadata-scrubbed MP4, WebM and poster PNG:
+
+```sh
+~/.venvs/manim/bin/python animations/render.py tegra_teardown.py DosStateMachine \
+    tegra_teardown/dos_state_machine          # --draft for a quick 480p preview
+```
+
+Reference the `.mp4` from Markdown like an image; the render hook turns it into
+a `<video>` with the poster and WebM it finds beside it.
+
 Publishing is moving the post from `drafts/` to `content/posts/`, setting
 `draft = false`, and a commit; Pages builds on push.
 

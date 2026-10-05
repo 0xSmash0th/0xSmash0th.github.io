@@ -17,6 +17,11 @@ Thumbs.db
 /.idea/
 /.vscode/
 
+# Manim's intermediate renders. Only the scrubbed outputs animations/render.py
+# writes into static/ are committed; these still carry the toolchain tags.
+/animations/media/
+__pycache__/
+
 # Scratch space for un-scrubbed screenshots. Put raw captures here, scrub them
 # with ./bin/scrub-image.sh, and only then move them into assets or static.
 /raw/
