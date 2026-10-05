@@ -35,36 +35,35 @@ The shape that actually ships today, a dirty Linux guest full of who-knows-what 
 
 > **Caveat** I have not reverse-engineered the hypervisor, QNX, or any of the other services DRIVE OS provides. That each of these services is a `peer` in the IVC sense is my inference from the design and the docs, they don't have to be and it's not something I verified.
 
-![DRIVE OS block diagram](/static/tegra_teardown/archi_foundation_image3.png)
-
-Here is that same shape in motion, and what one of those channels actually is: two rings in shared memory, one per direction. It also sets up the naming the rest of the post leans on, where the guest's TX ring is the service's RX ring, and the reply ring is the service's TX.
-
-![One guest, its service peers, and what a peer ring is](/static/tegra_teardown/peer_ring.mp4)
+![DRIVE OS block diagram](/static/tegra_teardown/archi_foundation_image.png)
 
 A few things fall out of that block diagram.
 - **The `local` end is a service partition, and it isn't Linux.** The far side of every IVC line is an HVRTOS binary. [2](#bibliography) [3](#bibliography) That's the concrete version of the victim in the threat model below: not Linux, but speaking the same protocol.
 - I am reading "Guest Operating System" as meaning it could be QNX or Linux.
 - I am inferring that SoC (system-on-chip) resource calls go to the hypervisor through a standard hypercall implementation and not IVC.
+
+Here is that same shape in motion, and what one of those channels actually is: two rings in shared memory, one per direction. It also sets up the naming the rest of the post leans on, where the guest's TX ring is the service's RX ring, and the reply ring is the service's TX.
+
+![One guest, its service peers, and what a peer ring is](/static/tegra_teardown/peer_ring.mp4)
+
 #### IGX Thor — a Linux VM beside a QNX safety VM
 The other one, NVIDIA's IGX gives two architectures for Thor, the second being "NV Hypervisor, supporting a Linux VM and a QNX VM on CCPLEX."[4](#bibliography) CCPLEX is the CPU complex (Arm application cores) so that sentence is putting both guests on the same cluster rather than on separate processor islands.
 
 ![IGX Thor stack](/static/tegra_teardown/full-stack-platform-for-enterprise-edge-ai.jpg)
 
 ### Threat model
-> **Review** This section was added after review; see [What review changed](#what-review-changed).
 
 What I'm attacking is `ivc.c` itself: the protocol implementation, independent of any particular caller.
 
 - **The victim (`local`)** is an endpoint running `ivc.c` the way its header says to: `tegra_ivc_notified()` after every doorbell, `get_next_frame()` followed by `advance()`. I'm assuming a well-behaved caller on purpose. A caller that breaks the contract is a caller bug, not a protocol bug.
 - **The attacker (`remote`)** is the other endpoint of the same channel, e.g. a compromised Linux guest talking to a service it's legitimately connected to. It is not a third party reaching into some other guest's channel; that would take a hypervisor mapping the wrong memory, which is a different, and much worse, bug.
 - **What the attacker controls:** whatever it can write in the channel's shared memory, at any time, in any order. It doesn't have to follow the protocol, run `ivc.c`, or be honest about its state. In practice that's every byte of both rings, for reasons in [the permissions section](#thoughts-on-hypervisor-permissions-for-the-shared-memory).
-- **What counts as a finding:** the victim corrupting memory, publishing or consuming a different frame than the one its caller asked for, or getting stuck in a state it can't leave. Anything that turns "the peer misbehaved" into "the victim misbehaved."
+- **What counts as a finding:** the victim corrupting memory, publishing or consuming a different frame than the one its caller asked for, or getting stuck in a state it can't leave. Basically, anything that turns "the peer misbehaved" into "the victim misbehaved."
 - **Out of scope:** frame contents (parsing them is the caller's job, more on that below), the hypervisor itself, and NVIDIA's out-of-tree `ivc-cdev.c` userspace interface.
 
 The protocol is symmetric, both ends run the same state table, so nothing here depends on which end is Linux. That's what makes it relevant to something like DRIVE OS, where the attacker is the Linux guest and the victim is a service partition that isn't Linux at all. The caveat: I haven't seen the service partitions' implementation. If they run `ivc.c` or a port of it, the results carry over. If they rolled their own, that's its own audit, and there is a likely candidate: NVIDIA's DRIVE OS ships its own IVC library, SIVC, documented as compatible with "Legacy IVC implementations."[20](#bibliography)
 
-Where `bpmp-tegra186.c` comes up, it's one real caller to compare against: does a shipping caller follow the header's guidance, and is a given finding reachable through it? It isn't the attack path. In that driver Linux's peer is BPMP firmware, which already controls Linux's clocks, resets and power, so BPMP misbehaving toward Linux doesn't cross any boundary that matters here.
-
+Where `bpmp-tegra186.c` comes up, it's one real caller to compare against: does a shipping caller follow the header's guidance, and is a given finding reachable through it? It isn't the attack path. In that driver Linux's peer is BPMP firmware, which already controls Linux's clocks, resets and power, so BPMP misbehaving toward Linux doesn't cross any boundary that matters here since I have already assumed a compromised Linux guest. 
 ## Tegra IVC from the lens of Binder
 
 Binder is the IPC I know best, so it's the ruler I reached for. Both are in-kernel comms between two parties that don't trust each other symmetrically. That is close to the end of the resemblance.
