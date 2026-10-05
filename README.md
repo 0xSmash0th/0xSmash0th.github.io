@@ -36,9 +36,16 @@ bin/scrub-image.sh static/img/*.png   # strip metadata before committing images
 ```
 
 Work in progress lives in `drafts/`, outside `content/`, so Hugo never reads
-it and nothing there can render, with or without `-D`. Note that "not
-rendered" is not "private": once the repo is pushed, `drafts/` is public on
-GitHub like everything else tracked.
+it and nothing there can render, with or without `-D`.
+
+`drafts/` is a **git submodule** pointing at a separate, private repo
+(`git@github.com:0xSmash0th/blog-drafts.git`), so drafts stay private while
+this repo is public — the public repo records only the submodule URL and a
+commit SHA, never the draft content. First checkout needs
+`git submodule update --init` (and read access to the private repo); the
+Pages CI uses `actions/checkout` with submodules off, so the public build
+never fetches it. Commit inside `drafts/` and push that repo on its own; the
+pointer in this repo only moves when you `git add drafts` and commit here.
 
 Animations are Manim Community scenes in `animations/`, rendered with the
 Manim virtualenv into `static/` as a metadata-scrubbed MP4, WebM and poster PNG:

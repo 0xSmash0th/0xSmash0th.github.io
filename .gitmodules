@@ -1,0 +1,4 @@
+[submodule "drafts"]
+	path = drafts
+	url = git@github.com:0xSmash0th/blog-drafts.git
+	branch = main
