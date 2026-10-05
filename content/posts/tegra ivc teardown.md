@@ -456,11 +456,9 @@ What Xen says is that backoff is the *floor* and not the fix. Xen has five more 
 - and a loud fatal way to declare one peer dead
 IVC has none of them, because IVC has decided none of them are its job.
 ##### The patch: geometric backoff
-> **Review** The numbers and the last two paragraphs were added after review; see [What review changed](#what-review-changed).
+There are a lot of open questions since I have not looked at the hypervisor(s), for this issue in particular the question is: Does the hypervisor enforce some usage limit that prevents a DoS across the SoC? My educated guess is to say that some of them might, most likely the newer implementations (IGX Thor). However, this doesn't prevent a victim guest/service from hot looping with any resource it is allowed by the hypervisor preventing communication with any other peer.
 
-There are a lot of open questions since I have not looked at the hypervisor(s), for this issue in particular the question is: Does the hypervisor enforce some usage limit that prevents a DoS across the SoC? My educated guess is to say that some of them might, most likely the newer implementations (IGX Thor). However, this doesn't prevent a victim guest from hot looping with any resource it is allowed by the hypervisor preventing communication with any other peer.
-
-The least invasive way I thought to do this is via the geometric backoff (i.e. the floor). So here is the patch:
+The least invasive way I thought to do this is via the geometric backoff. So here is the patch:
 ```diff
  void tegra_ivc_reset(struct tegra_ivc *ivc)
  {
@@ -514,58 +512,6 @@ This kind of fragmentation is tech-debt Google has been digging out of for years
 Maybe this is my bias talking, but my suggestion to NVIDIA would be to consolidate in some way. One implementation, in the open, with a shared conformance suite, hammered by everyone until it stops giving. That is perfectly compatible with a tiny wire contract; it's the *implementations* of the stack that need to stop being fragmented. The five things Xen has and IVC doesn't, per-peer servicing, a blocking wait, a stall timeout, a per-peer quota, and a loud way to declare a peer dead would be a good place to start though.
 
 Fragmentation may buy security through obscurity, but that only works until one implementation stack is important enough to be a target, and I don't know a company that doesn't want their tech to be important.
-## What review changed
-Prior work is one half of how I check myself. The other half: once I believe something, I hand it to someone very technical and let them try to break it. This post went through that and came back with questions. Every one was fair, and chasing them down taught me more than the first pass did. Here's what they asked, what I found, and what changed.
-
-### "What's the attack path?"
-They read the harness's victim as Linux's BPMP client, whose peer is BPMP firmware, which is more privileged than Linux. So, escaping from the firmware to the host? A fair read, because I never wrote down what I was attacking. Their other question, whether I meant a guest writing into the memory a service uses to talk to *another* guest, came from the same gap.
-
-The answer is now the [Threat model](#threat-model) section. The victim is `ivc.c` itself, used the way its header says. The attacker is the other endpoint of its own channel, not a third party. And `bpmp-tegra186.c` is a caller I compare against, not the target.
-
-### "Isn't stage-2 4K/16K/64K?"
-I had *assumed* (I did say not concluded) that Thor hands the header's two 64-byte halves to different writers. The reviewer pointed out that stage-2 and SMMU permissions come in translation granules, 4K at the smallest, and that BPMP packs its 256-byte channels sixteen to a page.
-
-So back to the docs I'd cited. Both CUDA documents are about coherency, which I'd said in Note 1, and neither says a word about permissions. The one I hadn't read was NVIDIA's own DRIVE OS IVC library, SIVC. Its `sivc_init()` requires the whole region be "mapped into the address space (execution domain) of both sides of the IVC channel with read-write access," because "Both send and receive FIFOs require both read and write access for transitional, backwards compatibility with Legacy IVC implementations."[20](#bibliography) Legacy IVC is this protocol. NVIDIA documents the opposite of my assumption: both ends can write every byte.
-
-My first reaction was that if that's true, NVIDIA has bigger problems than this post. It isn't, really. That's how Xen and virtio rings live too, and `ivc.c` was written for it. Frame indices are private and always in bounds, so the no-corruption claim survives. What changes is that `ivc.c` reads some of its *own* fields back out of shared memory, so the peer gets a say in what the victim believes about itself. Which raised the next question.
-
-### So does the patch still hold?
-That one was mine, not theirs. If the peer can write the victim's own `tx.state`, can it get around the backoff, which keys off that word changing?
-
-My harness already had an answer sitting in it. Every input runs in one of three modes, and one of them lets the attacker write the victim's own fields; I'd labeled that case a deployment gap and moved on. The logs show the fuzzer did it about 400,000 times, with no sanitizer findings and no new kind of oracle firing ([Note 3](#notes)).
-
-Then the reasoning. With the peer's state frozen, the victim's own writes settle within one transition, whatever the peer wrote first:
-
-| Peer leaves its state at | Victim ends up | Backoff |
-| --- | --- | --- |
-| `SYNC` | `ACK`, rewriting the same `ACK` every pass | grows |
-| `ACK` | `ESTABLISHED`, so `notified()` returns 0 | the loop exits |
-| `ESTABLISHED` or out of the enum, victim at `SYNC` | stays at `SYNC`; no transition applies | grows |
-| anything but `SYNC`, victim's own word forged out of the enum | stays at the forged value | grows |
-
-So set-and-forget is capped at about 13 passes a second under either permission model. Forging the victim's word gets the peer one backoff reset per store, which means a store per victim pass. That's not the amplification I was worried about. The case worth a sentence is a caller that resets and retries on every failure, since `tegra_ivc_reset()` restarts the backoff. The [patch section](#the-patch-geometric-backoff) now says all of this.
-
-### "Doesn't write_advance only ring on empty → non-empty?"
-Yes. `write_advance` rings when the queue goes from empty to non-empty, and `read_advance` when it goes from full to non-full. BPMP runs a single frame, so in-tree both conditions always hold, which is why I'd never seen it not ring. The [wording](#but-wheres-the-data-at) is fixed.
-
-### Smaller things
-- `checkCallingUid()` should have been `getCallingUid()`.
-- Five sources I cited never made it into the bibliography: the binder-fuzzing post, OEMpocalypse, GKI, the Xen source and the 2016 commit that brought `ivc.c` upstream. They're entries 15-19 now, and the Xen line numbers are pinned to v6.17-rc5.
-- The header overlap I found in `tegra_ivc_check_params` gives an attacker nothing it didn't have: both ends can already write both headers, and in-tree BPMP keeps tx and rx in separate 4K allocations.
-- Two typos.
-
-### What held up, what changed
-
-| Claim | Before review | After |
-| --- | --- | --- |
-| Threat model | implied | written down: `ivc.c` against a hostile endpoint; BPMP is a comparison caller |
-| Permissions | 64B per half-line, assumed | gone; NVIDIA documents read-write on both FIFOs for both ends |
-| No memory corruption | shown with ownership enforced | holds under full write: ~400K forged victim-field writes, nothing from the sanitizers |
-| `SYNC`-park DoS | found in mode P | unchanged |
-| Backoff patch | "cuts the cost" | set-and-forget capped at ~13 passes/s under either model; forging costs a store per pass |
-| Doorbell | "rings it" | rings on empty → non-empty; always, in BPMP's single-frame setup |
-
-The assumption I was least sure of was the one I'd built the most on, and dropping it made the post stronger rather than weaker. The evidence for the stronger claim had been in my own logs the whole time; the 64-byte assumption was a hedge I didn't need. It took someone else asking for me to go look. Same reason I don't read prior work first, just from the other side: a second set of eyes only helps if they aren't seeing what you see.
 ## Future work
 As it stands I probably won't look much more at Tegra. If I do it is obvious that `ivc.c` is not the target, caller implementations, `ivc-cdev.c` or something else adjacent to `ivc.c` is what I would look at. Maybe the hypervisor depending on what the agreements are to get it. Review turned up some concrete places to start:
 - **SIVC**, NVIDIA's DRIVE OS IVC library and the likely implementation on the service side.[20](#bibliography) Only three of its functions are publicly documented.
@@ -584,7 +530,36 @@ Everything I could find on Tegra itself is boot chain and silicon. Fusée Gelée
 Tegra in a shipping car is Tencent's Keen Security Lab, twice. First CVE-2017-6261, a reference-count bug in the Tegra `nvmap` kernel module on Tesla's infotainment unit, reached from userspace through `/dev/nvmap`. [12](#bibliography) (Their whitepaper is where the mechanism comes from; NVIDIA's own CVE text for 6261 is vaguer and calls it a user-space driver issue.) Then Mercedes' MBUX: the NTG6 head unit's Multimedia Board is a Tegra T18X, and "the hardware can support the Nvidia Tegra hypervisor very well. The hypervisor virtualizes two Linux systems." [14](#bibliography) So somebody has already stood on a production Tegra hypervisor with two guests on it. 
 
 Blade's *Another Road Leads to the Host* has an untrusted guest writing messages into a shared ring, the vGPU plugin `libnvidia-vgpu.so` parsing them inside a root-running `nvidia-vgpu-mgr`, and the researchers turning that into root on the host. [13](#bibliography) Same shape as my threat model. Two things make it a different post: it is NVIDIA's closed x86 datacenter stack, nothing with an Arm core in it, and the bugs are in the message *payload* (frames) which is the one thing I deliberately kept out of the fuzzer since I am not looking at callers here. 
-## Notes
+# Notes
+## What review changed
+Prior work is one half of how I check myself. The other half: I hand it to someone very technical and let them try to break it. This post went through that and came back with questions. Here's what they asked, what I found, and what changed.
+#### "What's the attack path?"
+The threat model was confusing. Whether I meant a guest writing into the memory a service uses to talk to *another* guest, etc. The answer is now the [Threat model](#threat-model) section. 
+#### "Isn't stage-2 4K/16K/64K?"
+Some docs I read seemed to imply that Thor hands the header's two 64-byte halves to different writers. The reviewer pointed out that stage-2 and SMMU permissions come in translation granules, 4K at the smallest. So back to the docs I'd cited. Both CUDA documents are about coherency but i read implied permission. Nvidia is a chipmaker, maybe Tegra is built different than stock ARM?
+
+The one I hadn't read was NVIDIA's own DRIVE OS IVC library, SIVC. Its `sivc_init()` requires the whole region be "mapped into the address space (execution domain) of both sides of the IVC channel with read-write access," because "Both send and receive FIFOs require both read and write access for transitional, backwards compatibility with Legacy IVC implementations."[20](#bibliography) Legacy IVC is this protocol. NVIDIA documents the opposite of my assumption: both ends can write every byte.
+
+My first reaction was that if that's true, NVIDIA has bigger problems than this post. It isn't, really. That's how Xen and virtio rings live too, and `ivc.c` was written for it. Frame indices are private and always in bounds, so the no-corruption claim survives. What changes is that `ivc.c` reads some of its *own* fields back out of shared memory, so the peer gets a say in what the victim believes about itself. Which raised the next question.
+#### So does the patch still hold?
+That one was mine, not theirs. If the peer can write the victim's own `tx.state`, can it get around the backoff, which keys off that word changing?
+
+My harness already had an answer sitting in it. Every input runs in one of three modes, and one of them lets the attacker write the victim's own fields; I'd labeled that case a deployment gap and moved on. The logs show the fuzzer did it about 400,000 times, with no sanitizer findings and no new kind of oracle firing ([Note 3](#notes)).
+
+Then the reasoning. With the peer's state frozen, the victim's own writes settle within one transition, whatever the peer wrote first:
+
+| Peer leaves its state at | Victim ends up | Backoff |
+| --- | --- | --- |
+| `SYNC` | `ACK`, rewriting the same `ACK` every pass | grows |
+| `ACK` | `ESTABLISHED`, so `notified()` returns 0 | the loop exits |
+| `ESTABLISHED` or out of the enum, victim at `SYNC` | stays at `SYNC`; no transition applies | grows |
+| anything but `SYNC`, victim's own word forged out of the enum | stays at the forged value | grows |
+
+So set-and-forget is capped at about 13 passes a second under either permission model. Forging the victim's word gets the peer one backoff reset per store, which means a store per victim pass. That's not the amplification I was worried about. The case worth a sentence is a caller that resets and retries on every failure, since `tegra_ivc_reset()` restarts the backoff. The [patch section](#the-patch-geometric-backoff) now says all of this.
+#### Smaller things
+Many, of them... Thanks for taking the time to review my friend!
+![brasil flag](/static/tegra_teardown/brasil-flag.png)
+
 ### Note 1 — coherency is not permission
 
 NVIDIA documents two steps. **I/O coherency** — *"a feature with which an I/O device such as a GPU can read the latest updates in CPU caches"* — is *"supported on Tegra devices starting with Xavier SOC"*, and is one-way. **Sysmem Full Coherency** — *"an extension to I/O coherency where additionally the CPU can also read the latest updates in the GPU's cache"* — is *"supported on Tegra devices starting with Thor SoC"* and *"removes the need to perform both CPU and GPU cache management operations when the same physical memory is shared between CPU and GPU, and cached on both"* ([CUDA for Tegra, *I/O Coherency*](https://docs.nvidia.com/cuda/cuda-for-tegra-appnote/index.html#i-o-coherency))[[5]](#bibliography). Separately, the programming guide splits platforms by page table: hardware-coherent ones *"offer a logically combined page table for both CPUs and GPUs"* and are *"coherent at cache-line granularity instead of page-size granularity"*, against software-coherent ones with separate tables ([Unified Memory, *CPU and GPU page tables*](https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/unified-memory.html#cpu-and-gpu-page-tables-hardware-coherency-vs-software-coherency))[[6]](#bibliography). The docs establish *coherency* at cache-line granularity on a Thor-class part. It says nothing about *permission* at that granularity: **neither document mentions access permissions, protection granularity, hypervisor page tables or the SMMU (the system-wide memory management unit, or MMU) at all**. Coherency decides which agent observes whose writes; permission decides which agent may write. A part can be fully coherent at 64 B and still enforce access control only at 4 KiB: the permission granule is a property of the MMU, not of the coherence fabric. That gap is why this post originally *assumed* 64-byte permissions. NVIDIA's DRIVE OS IVC library closes it the other way: its `sivc_init()` requires the region be mapped read-write into both ends, for compatibility with "Legacy IVC implementations."[20](#bibliography) So permission is page-granular, and both ends can write everything.
