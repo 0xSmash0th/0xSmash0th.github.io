@@ -37,7 +37,11 @@ The shape that actually ships today, a dirty Linux guest full of who-knows-what 
 
 ![DRIVE OS block diagram](/static/tegra_teardown/archi_foundation_image3.png)
 
-A few things fall out of that picture.
+Here is that same shape in motion, and what one of those channels actually is: two rings in shared memory, one per direction. It also sets up the naming the rest of the post leans on, where the guest's TX ring is the service's RX ring, and the reply ring is the service's TX.
+
+![One guest, its service peers, and what a peer ring is](/static/tegra_teardown/peer_ring.mp4)
+
+A few things fall out of that block diagram.
 - **The `local` end is a service partition, and it isn't Linux.** The far side of every IVC line is an HVRTOS binary. [2](#bibliography) [3](#bibliography) That's the concrete version of the victim in the threat model below: not Linux, but speaking the same protocol.
 - I am reading "Guest Operating System" as meaning it could be QNX or Linux.
 - I am inferring that SoC (system-on-chip) resource calls go to the hypervisor through a standard hypercall implementation and not IVC.

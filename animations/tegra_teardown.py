@@ -24,6 +24,7 @@ DIM = "#8a8a84"
 FAINT = "#44444f"
 ATTACK = "#ff8f8f"
 GOOD = "#8fd6a0"
+CHAN = "#86c5ff"  # channel wires: a bright neutral, distinct from both ends
 SANS = "Noto Sans"
 MONO = "DejaVu Sans Mono"
 
@@ -388,3 +389,209 @@ class PatchCompare(_CaptionScene):
             self.play(FadeIn(tag, shift=UP * 0.1), run_time=0.5)
         self.caption("The backoff stops the heat. The channel is still dead.")
         self.wait(2.5)
+
+
+def ring_pos(center, r, n, i):
+    center = np.array(center, dtype=float)
+    ang = PI / 2 - (i % n) * TAU / n          # slot 0 at top, clockwise
+    return center + r * np.array([np.cos(ang), np.sin(ang), 0.0])
+
+
+def ring_buffer(center, r, n, size=0.55):
+    """n slot squares arranged on a circle, plus a faint arc showing the flow
+    goes *around* the ring (what makes it a ring, not a strip)."""
+    slots = VGroup(*[
+        Square(size, stroke_color=FAINT, stroke_width=2, fill_color=NODE_FILL,
+               fill_opacity=1).move_to(ring_pos(center, r, n, i))
+        for i in range(n)])
+    flow = Arc(radius=r + 0.5, start_angle=PI / 2 - 0.3, angle=-TAU * 0.78,
+               arc_center=np.array(center, dtype=float), color=FAINT,
+               stroke_width=2).add_tip(tip_length=0.16)
+    return slots, flow
+
+
+def ring_marker(center, r, n, i, color, letter, pad=0.55):
+    """A labelled pointer sitting just outside slot i, tip toward the centre."""
+    center = np.array(center, dtype=float)
+    p = ring_pos(center, r, n, i)
+    d = p - center
+    d = d / np.linalg.norm(d)
+    tri = Triangle(color=color, fill_opacity=1, stroke_width=0).scale(0.14)
+    tri.rotate(angle_of_vector(-d) - PI / 2).move_to(p + d * pad)
+    return VGroup(tri, label(letter, 15, color, weight=BOLD).next_to(
+        tri, d, buff=0.05))
+
+
+# ============================================================================
+# PeerRing — the DRIVE OS layout, and what one peer "ring" actually is.
+# A redraw of static/tegra_teardown/archi_foundation_image3.png as motion.
+# Lays the groundwork for the header: guest TX == service RX, guest RX == service TX.
+# ============================================================================
+class PeerRing(_CaptionScene):
+    def construct(self):
+        # --- 1. the stack: one guest, a rack of services, one hypervisor ----
+        self.next_section("stack")
+        hyper = RoundedRectangle(corner_radius=0.1, width=12.0, height=0.7,
+                                 stroke_color=FAINT, stroke_width=2,
+                                 fill_color=NODE_FILL, fill_opacity=1)
+        hyper.to_edge(DOWN, buff=1.4)
+        hyper_lbl = label("Hypervisor  (partitions fixed at build by the PCT)",
+                          18, DIM).move_to(hyper)
+
+        guest = word_box("Linux guest", edge=ATTACK, width=2.6, fill="#281b1b")
+        guest[1].become(label("Linux guest", 20, ATTACK).move_to(guest[0]))
+        guest_tag = label("untrusted", 14, DIM).next_to(guest, UP, buff=0.12)
+        guest_grp = VGroup(guest, guest_tag).move_to([-5.0, 0.6, 0])
+
+        names = ["BPMP", "Storage", "GPU", "SE", "Debug"]
+        svc = VGroup(*[
+            VGroup(RoundedRectangle(corner_radius=0.12, width=1.25, height=1.3,
+                                    stroke_color=GOOD, stroke_width=2.5,
+                                    fill_color="#10281a", fill_opacity=1),
+                   label(n, 17, GOOD))
+            for n in names])
+        for b in svc:
+            b[1].rotate(PI / 2).move_to(b[0])
+        svc.arrange(RIGHT, buff=0.3).move_to([2.4, 0.6, 0])
+        dots = label("· · ·", 24, DIM).next_to(svc, RIGHT, buff=0.25)
+        svc_tag = label("service partitions  (HVRTOS, not Linux)", 17, GOOD)
+        svc_tag.next_to(svc, UP, buff=0.3)
+
+        self.play(FadeIn(hyper), FadeIn(hyper_lbl), run_time=0.7)
+        self.play(FadeIn(guest_grp, shift=UP * 0.2),
+                  FadeIn(svc, shift=UP * 0.2), FadeIn(dots), FadeIn(svc_tag),
+                  run_time=1.0)
+        self.caption(
+            f'DRIVE OS: one <span fgcolor="{ATTACK}">Linux guest</span> beside '
+            f'a rack of <span fgcolor="{GOOD}">service partitions</span>.')
+        self.wait(1.6)
+
+        # --- 2. each channel is a peer --------------------------------------
+        self.next_section("peers")
+        self.caption(
+            f'Each line is one <b>channel</b>. The service on the far end is a '
+            f'<span fgcolor="{GOOD}">peer</span> — a service, not a VM.')
+        # fan the channels out as curved arcs into the empty space below, so
+        # they don't pile up into one near-horizontal smear
+        links = VGroup(*[
+            ArcBetweenPoints(guest.get_right(), b[0].get_left(),
+                             angle=0.3 + 0.16 * i, color=CHAN, stroke_width=3)
+            for i, b in enumerate(svc)])
+        for ln in links:
+            self.play(Create(ln), run_time=0.22)
+        self.wait(0.8)
+        self.caption("One guest, many peers — about ten of them.")
+        self.play(LaggedStart(*[
+            ShowPassingFlash(ln.copy().set_stroke(CHAN, 6), time_width=0.8,
+                             run_time=0.9) for ln in links], lag_ratio=0.12))
+        self.wait(0.8)
+
+        # --- 3. zoom into the BPMP channel: it is TWO rings -----------------
+        self.next_section("zoom")
+        self.caption("Zoom into one channel. What actually travels it?")
+        bpmp = svc[0]
+        fade = VGroup(hyper, hyper_lbl, svc[1:], dots, svc_tag, *links[1:])
+        self.play(FadeOut(fade), guest_tag.animate.set_opacity(0), run_time=0.8)
+
+        g_end = word_box("Linux\nguest", edge=ATTACK, width=1.9, fill="#281b1b")
+        g_end[1].become(label("Linux\nguest", 18, ATTACK).move_to(g_end[0]))
+        g_end.move_to([-5.7, 0, 0])
+        s_end = word_box("BPMP", edge=GOOD, width=1.9, fill="#10281a")
+        s_end[1].become(label("BPMP\nservice", 18, GOOD).move_to(s_end[0]))
+        s_end.move_to([5.7, 0, 0])
+        self.play(Transform(guest, g_end), Transform(bpmp, s_end),
+                  FadeOut(links[0]), run_time=1.0)
+
+        # two rings, side by side: ring A near the guest, ring B near the service
+        N, R = 6, 0.9
+        ca, cb = np.array([-2.35, 0.35, 0.0]), np.array([2.35, 0.35, 0.0])
+        slots_a, flow_a = ring_buffer(ca, R, N)
+        slots_b, flow_b = ring_buffer(cb, R, N)
+        eqa = MarkupText(f'<span fgcolor="{ATTACK}">guest TX</span>  ≡  '
+                         f'<span fgcolor="{GOOD}">service RX</span>',
+                         font=SANS, font_size=22).next_to(slots_a, UP, buff=0.5)
+        eqb = MarkupText(f'<span fgcolor="{GOOD}">service TX</span>  ≡  '
+                         f'<span fgcolor="{ATTACK}">guest RX</span>',
+                         font=SANS, font_size=22).next_to(slots_b, UP, buff=0.5)
+
+        self.play(*[GrowFromCenter(s) for s in slots_a],
+                  *[GrowFromCenter(s) for s in slots_b],
+                  Create(flow_a), Create(flow_b), run_time=1.1)
+        self.caption("One channel is <b>two rings</b> in shared memory — "
+                     "one per direction.")
+        self.wait(1.4)
+
+        def dim(group, arc, v):
+            # dim slots/labels normally; the flow arc only by STROKE, or
+            # set_opacity fills its interior into a disc.
+            return [group.animate.set_opacity(v),
+                    arc.animate.set_stroke(opacity=0.5 * v + 0.1)]
+
+        # --- 4. ring A: guest TX == service RX ------------------------------
+        self.next_section("ring_a")
+        self.play(*dim(VGroup(slots_b, eqb), flow_b, 0.25))
+        wa = Arrow(g_end.get_right(), slots_a.get_left(), buff=0.15,
+                   color=ATTACK, stroke_width=4)
+        self.play(GrowArrow(wa), FadeIn(eqa, shift=DOWN * 0.1))
+        self.caption(f'The <span fgcolor="{ATTACK}">guest</span> writes frames; '
+                     f'its index walks around the ring.')
+        w = ring_marker(ca, R, N, 0, ATTACK, "W")
+        r = ring_marker(ca, R, N, 0, GOOD, "R", pad=1.0)
+        self.play(FadeIn(w), FadeIn(r))
+        fa = VGroup()
+        for i in range(3):
+            fl = label("f", 15, ATTACK, font=MONO).move_to(ring_pos(ca, R, N, i))
+            fa.add(fl)
+            self.play(slots_a[i].animate.set_fill(ATTACK, 0.5), FadeIn(fl),
+                      Transform(w, ring_marker(ca, R, N, i + 1, ATTACK, "W")),
+                      run_time=0.45)
+        ra = CurvedArrow(slots_a.get_bottom(), s_end.get_bottom(), angle=-0.9,
+                         color=GOOD, stroke_width=4, tip_length=0.2)
+        self.caption(f'The <span fgcolor="{GOOD}">service</span> reads behind '
+                     f'it — same memory, two names.')
+        self.play(Create(ra))
+        for i in range(3):
+            self.play(slots_a[i].animate.set_fill(GOOD, 0.3),
+                      Transform(r, ring_marker(ca, R, N, i + 1, GOOD, "R", pad=1.0)),
+                      run_time=0.4)
+        self.play(Indicate(eqa, color=TEXT, scale_factor=1.1))
+        self.wait(1.2)
+
+        # --- 5. ring B: service TX == guest RX ------------------------------
+        self.next_section("ring_b")
+        self.play(*dim(VGroup(slots_a, eqa, w, r, fa), flow_a, 0.25),
+                  FadeOut(wa), FadeOut(ra),
+                  *dim(VGroup(slots_b, eqb), flow_b, 1.0))
+        wb = Arrow(s_end.get_left(), slots_b.get_right(), buff=0.15,
+                   color=GOOD, stroke_width=4)
+        self.play(GrowArrow(wb))
+        self.caption(f'The reply ring runs the other way: the '
+                     f'<span fgcolor="{GOOD}">service</span> writes, the '
+                     f'<span fgcolor="{ATTACK}">guest</span> reads.')
+        w2 = ring_marker(cb, R, N, 0, GOOD, "W")
+        r2 = ring_marker(cb, R, N, 0, ATTACK, "R", pad=1.0)
+        self.play(FadeIn(w2), FadeIn(r2))
+        for i in range(2):
+            fl = label("f", 15, GOOD, font=MONO).move_to(ring_pos(cb, R, N, i))
+            self.play(slots_b[i].animate.set_fill(GOOD, 0.5), FadeIn(fl),
+                      Transform(w2, ring_marker(cb, R, N, i + 1, GOOD, "W")),
+                      run_time=0.45)
+        rb = CurvedArrow(slots_b.get_bottom(), g_end.get_bottom(), angle=0.9,
+                         color=ATTACK, stroke_width=4, tip_length=0.2)
+        self.play(Create(rb))
+        for i in range(2):
+            self.play(slots_b[i].animate.set_fill(ATTACK, 0.3),
+                      Transform(r2, ring_marker(cb, R, N, i + 1, ATTACK, "R", pad=1.0)),
+                      run_time=0.4)
+        self.play(Indicate(eqb, color=TEXT, scale_factor=1.1))
+        self.wait(1.2)
+
+        # --- 6. groundwork for the header -----------------------------------
+        self.next_section("groundwork")
+        self.play(FadeOut(wb), FadeOut(rb), FadeOut(w2), FadeOut(r2),
+                  *dim(VGroup(slots_a, eqa, w, r, fa), flow_a, 1.0))
+        self.caption("Whoever transmits on a ring owns its counter and state "
+                     "— that tx/rx split is the header, next.")
+        self.play(Indicate(eqa, color=TEXT, scale_factor=1.08),
+                  Indicate(eqb, color=TEXT, scale_factor=1.08), run_time=1.6)
+        self.wait(2.2)
