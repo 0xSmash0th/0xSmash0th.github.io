@@ -1,13 +1,11 @@
 +++
 title = 'Tegra IVC Teardown'
-date = 2026-09-02T00:00:00Z
+date = 2026-10-05T00:00:00Z
 draft = false
 description = "Is Tegra's Inter VM communication plagued with the same issues as Binder was?"
 tags = ['kernel', 'linux', 'threat-modeling', 'audit', 'arm']
 toc = true
 +++
-> **Revised 2026-10-02** after review: the threat model is written down, the 64-byte permission assumption is gone, and the patch section says what it does and doesn't fix. The story is in [What review changed](#what-review-changed).
-
 ## TL;DR
 
 Short answer to the question is Tegra's IVC (Inter-VM Communication) plagued with the same issues as Binder? In a word, no. 
