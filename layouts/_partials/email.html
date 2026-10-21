@@ -1,0 +1,17 @@
+{{- /* Scraper-resistant email rendering.
+       Neither "@" nor "." appears in the HTML text: the local part and each
+       domain label are separate spans, and the separators are injected by CSS
+       (.eml-at / .eml-dot) from the bundled stylesheet. A regex harvester
+       reading the DOM therefore sees no contiguous address and no "@".
+       CSP on this site is script-src 'none', so this is deliberately
+       CSS-only -- no JavaScript assembly. The aria-label spells the address
+       with "at"/"dot" words so screen readers still get it.
+       Pass the address as context: {{ partial "email.html" site.Params.contactEmail }} */ -}}
+{{- $p := split . "@" -}}
+{{- if lt (len $p) 2 -}}
+{{ . }}
+{{- else -}}
+{{- $local := index $p 0 -}}
+{{- $labels := split (index $p 1) "." -}}
+<span class="eml" aria-label="{{ $local }} at {{ delimit $labels " dot " }}"><span class="eml-u">{{ $local }}</span>{{- range $i, $l := $labels -}}<span class="{{ if eq $i 0 }}eml-at{{ else }}eml-dot{{ end }}">{{ $l }}</span>{{- end -}}</span>
+{{- end -}}

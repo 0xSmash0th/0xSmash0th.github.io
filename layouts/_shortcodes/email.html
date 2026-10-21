@@ -1,0 +1,3 @@
+{{- /* Inline scraper-resistant email for content. Usage: {{< email >}} uses
+       site.Params.contactEmail; {{< email "other@addr.tld" >}} overrides it. */ -}}
+{{- partial "email.html" (or (.Get 0) site.Params.contactEmail) -}}

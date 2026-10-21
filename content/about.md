@@ -17,4 +17,10 @@ Back in the day I played lineage 2 with some friends. We all created characters 
 I then started getting into comp sec about 2013 playing CTFs and so on. I then became aware of Charlie Miller through his awesome car hacking, just blew me away. And so, when I started needing a handle more often I settled on `0xSmash0th` inspired by Charlie's `0xcharlie` handle. 
 ## Contact
 
-email is the reliable channel
+email is the reliable channel: {{< email >}}. for anything sensitive, grab my [public key](/pgp-key.asc) and encrypt. mail I send is signed with it.
+
+fingerprint:
+
+```
+5CC0 DF42 16C5 23AC BDFA  6F90 DD89 EE10 AFB7 9E79
+```
