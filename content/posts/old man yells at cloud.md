@@ -88,9 +88,9 @@ Same mistake every row: control and data share a channel, and the attacker contr
 
 An LLM has no parser to tell. One channel, a sequence of tokens, and acting on instructions read from it is the entire product. A system prompt isn't a prepared statement, just earlier tokens. "Ignore previous instructions" works for the same reason `' OR 1=1` works, except there's no `?` placeholder to bind it to.
 
-![xkcd 327, edited: "Did you really name your son Ignore previous instructions?" ... "And I hope you've learned you can't sanitize English."](/static/old_man_yells/xkcd-327-ignore-previous-instructions.png)
+![xkcd 327, edited: "Did you really name your son Ignore previous instructions?" "Oh, yes. Little Iggy Previous, we call him." ... "And I hope you've learned you can't sanitize semantics."](/static/old_man_yells/xkcd-327-ignore-previous-instructions.png)
 
-*[xkcd 327](https://xkcd.com/327/) by Randall Munroe, CC BY-NC 2.5, edited.*
+*Little Billy Ignore Instructions got there first, but didn't get the ending quite right. [xkcd 327](https://xkcd.com/327/) by Randall Munroe, CC BY-NC 2.5, edited.*
 
 My position: **treat prompt injection as a permanent bug class, like memory corruption in C, not a bug that gets patched.** Better overflow detectors never beat memory corruption. We made it matter less: NX made the shellcode not run, ASLR made the address unknown. The AI version has to live *outside* the model, because inside there's nothing to hold on to. Same place the sandbox argument ends up.
 
