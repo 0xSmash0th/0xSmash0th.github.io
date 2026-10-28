@@ -4,7 +4,8 @@
   </section>
   {{ $posts := where site.RegularPages "Section" "posts" }}
   {{ $docs := where $posts "Params.doc" true }}
-  {{ $articles := $posts | complement $docs }}
+  {{ $satire := where $posts "Params.satire" true }}
+  {{ $articles := $posts | complement $docs | complement $satire }}
   {{ with $docs }}
     <h2>Documentation</h2>
     <ul class="post-list">
@@ -26,4 +27,15 @@
       </li>
     {{ end }}
   </ul>
+  {{ with $satire }}
+    <h2>Draft Version Final_v2_FINAL</h2>
+    <ul class="post-list">
+      {{ range . }}
+        <li>
+          <a href="{{ .RelPermalink }}">{{ .Title }}</a>
+          {{ with .Description }}<p class="excerpt">{{ . }}</p>{{ end }}
+        </li>
+      {{ end }}
+    </ul>
+  {{ end }}
 {{ end }}

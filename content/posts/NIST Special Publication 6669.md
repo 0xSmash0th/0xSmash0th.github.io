@@ -5,6 +5,7 @@ draft = false
 description = "A parody national standard for quantifying fecal deposits by mass, volume, and comedic magnitude. Not affiliated with NIST. Wash your hands."
 tags = ['parody', 'satire', 'metrology']
 toc = true
+satire = true
 +++
 
 **National Standard for Poop Mass and Volume**
