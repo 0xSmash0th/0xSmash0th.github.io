@@ -2,9 +2,23 @@
   <section class="intro">
     {{ .Content }}
   </section>
+  {{ $posts := where site.RegularPages "Section" "posts" }}
+  {{ $docs := where $posts "Params.doc" true }}
+  {{ $articles := $posts | complement $docs }}
+  {{ with $docs }}
+    <h2>Documentation</h2>
+    <ul class="post-list">
+      {{ range . }}
+        <li>
+          <a href="{{ .RelPermalink }}">{{ .Title }}</a>
+          {{ with .Description }}<p class="excerpt">{{ . }}</p>{{ end }}
+        </li>
+      {{ end }}
+    </ul>
+  {{ end }}
   <h2>Recent posts</h2>
   <ul class="post-list">
-    {{ range first 10 (where site.RegularPages "Section" "posts") }}
+    {{ range first 10 $articles }}
       <li>
         <a href="{{ .RelPermalink }}">{{ .Title }}</a>
         <time datetime="{{ .Date.Format "2006-01-02" }}">{{ .Date.Format "2006-01-02" }}</time>
